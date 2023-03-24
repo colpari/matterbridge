@@ -7,3 +7,6 @@ matterbridge.toml
 
 # Exclude IDE Files
 .vscode
+
+# profile directory for buildWithDocker.sh
+/builder-home
