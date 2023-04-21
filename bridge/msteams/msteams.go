@@ -1,5 +1,11 @@
 package bmsteams
 
+/*
+Dieser Code importiert verschiedene Pakete und Bibliotheken
+für die Entwicklung einer Matterbridge-Brücke,
+die Microsoft Graph-API verwendet, um eine Verbindung
+zu Microsoft Teams herzustellen und zu kommunizieren.
+*/
 import (
 	"context"
 	"fmt"
@@ -19,11 +25,21 @@ import (
 	"golang.org/x/oauth2"
 )
 
+/*
+Dieser Code definiert zwei Variablen: eine Liste von Standardberechtigungen
+für den Microsoft Graph-API-Zugriff und ein regulärer Ausdruck, der verwendet wird,
+um Anhänge aus einer Zeichenfolge zu entfernen, indem er nach einem bestimmten Muster sucht.
+*/
 var (
 	defaultScopes = []string{"openid", "profile", "offline_access", "Group.Read.All", "Group.ReadWrite.All"}
 	attachRE      = regexp.MustCompile(`<attachment id=.*?attachment>`)
 )
 
+/*
+Dieser Code definiert eine Struktur namens "Bmsteams", die Konfigurationsdaten für die Verbindung
+mit der Microsoft Teams-API speichert und Funktionen für die Verwendung
+innerhalb einer Matterbridge-Brücke bereitstellt.
+*/
 type Bmsteams struct {
 	gc    *msgraph.GraphServiceRequestBuilder
 	ctx   context.Context
@@ -35,6 +51,18 @@ func New(cfg *bridge.Config) bridge.Bridger {
 	return &Bmsteams{Config: cfg}
 }
 
+type teamsMessageInfo struct {
+	mTime   time.Time //Zeitstempel
+	replies map[string]time.Time
+}
+
+/*
+Dieser Code definiert eine Methode namens "Connect" für die "Bmsteams" Struktur,
+die eine Verbindung zur Microsoft Teams-API herstellt, indem sie die Authentifizierungsinformationen lädt,
+einen Berechtigungstoken für den Zugriff auf die API anfordert, einen HTTP-Client erstellt
+und eine neue Instanz des Microsoft Graph-API-Clients erstellt, bevor sie die Bot-ID festlegt
+und eine Erfolgsmeldung zurückgibt.
+*/
 func (b *Bmsteams) Connect() error {
 	tokenCachePath := b.GetString("sessionFile")
 	if tokenCachePath == "" {
@@ -125,6 +153,7 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 
 func (b *Bmsteams) getMessages(channel string) ([]msgraph.ChatMessage, error) {
 	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(channel).Messages().Request()
+	ct.Expand("replies")
 	rct, err := ct.Get(b.ctx)
 	if err != nil {
 		return nil, err
@@ -133,38 +162,127 @@ func (b *Bmsteams) getMessages(channel string) ([]msgraph.ChatMessage, error) {
 	return rct, nil
 }
 
+// Verwalten von toplevel map das verwalten der map (finde nachricht, prüfe Zeitstemple von Nachricht, füge Nachrichte ein)
+
+func createMapReplies() map[string]time.Time {
+	mapReplies := make(map[string]time.Time)
+	return mapReplies
+
+}
+
+func updateMsgToplevel(toplevelMsg *msgraph.ChatMessage, msgToplevelInfo *teamsMessageInfo) {
+	msgToplevelInfo.mTime = *toplevelMsg.CreatedDateTime
+	if toplevelMsg.LastModifiedDateTime != nil {
+		msgToplevelInfo.mTime = *toplevelMsg.LastModifiedDateTime
+	}
+}
+
+func updateMsgReplies(msg *msgraph.ChatMessage, msgRepliesInfo *teamsMessageInfo) {
+	mapReplies := createMapReplies()
+	for _, reply := range msg.Replies {
+		mapReplies[*reply.ID] = *reply.CreatedDateTime
+		if reply.LastModifiedDateTime != nil {
+			mapReplies[*reply.ID] = *reply.LastModifiedDateTime
+		}
+	}
+	msgRepliesInfo.replies = mapReplies // nur im ersten mal
+}
+
+// prüft entweder LastModifiedDateTime oder CreatedDateTime
+func msgTime(graphMsg *msgraph.ChatMessage) *time.Time {
+	if graphMsg.LastModifiedDateTime != nil {
+		return graphMsg.LastModifiedDateTime
+	}
+
+	return graphMsg.CreatedDateTime
+}
+
 //nolint:gocognit
 func (b *Bmsteams) poll(channelName string) error {
-	msgmap := make(map[string]time.Time)
+	msgmap := make(map[string]teamsMessageInfo)
 	b.Log.Debug("getting initial messages")
 	res, err := b.getMessages(channelName)
 	if err != nil {
 		return err
 	}
-	for _, msg := range res {
-		msgmap[*msg.ID] = *msg.CreatedDateTime
-		if msg.LastModifiedDateTime != nil {
-			msgmap[*msg.ID] = *msg.LastModifiedDateTime
-		}
+	// Verwalten von toplevel map das verwalten der map (finde nachricht, prüfe Zeitstemple von Nachricht, füge Nachrichte ein)
+	// code wenn noch nicht in der map ist. Wenns neue Nachricht ist.
+	// creat methode für mapReplies wenn neue nachricht
+	// Verwalten von replies map  mit dem gleichen code
+
+	// für jede top-level nachricht
+	//		prüfe ob es auf teams-seite änderungen an den replies gibt
+	//	falls ja
+	//		sende änderungen weiter zur bridge (neuer kommentar, kommentar geändert, kommentar gelöscht)
+	//		update entsprechende maps
+	// zwei listen/map vergleichen (res WICHTIG)
+	// variablen umbennen
+
+	for _, msgToplevel := range res {
+		msgToplevelInfo := msgmap[*msgToplevel.ID]
+		msgToplevelInfo.mTime = *msgToplevel.CreatedDateTime
+		updateMsgToplevel(&msgToplevel, &msgToplevelInfo)
+		updateMsgReplies(&msgToplevel, &msgToplevelInfo)
+		msgmap[*msgToplevel.ID] = msgToplevelInfo
 	}
+
 	time.Sleep(time.Second * 5)
 	b.Log.Debug("polling for messages")
 	for {
 		res, err := b.getMessages(channelName)
+
 		if err != nil {
 			return err
 		}
+		// check top level messages from oldest to newest
+		//
 		for i := len(res) - 1; i >= 0; i-- {
 			msg := res[i]
-			if mtime, ok := msgmap[*msg.ID]; ok {
-				if mtime == *msg.CreatedDateTime && msg.LastModifiedDateTime == nil {
+			if msgInfo, ok := msgmap[*msg.ID]; ok {
+
+				// skip if we already know the message id with that timestamp
+				// prüfen ob die replies verändert wurden oder nicht
+				// replies zuerst prüfen
+				// vier zustände gelöscht/nicht vorhanden/neu/ reply vorhanden und nicht verändert
+				//
+
+				// ist die reply verändert wurden
+				if msgInfo.mTime == *msg.LastModifiedDateTime && msgInfo.replies != nil {
 					continue
 				}
-				if msg.LastModifiedDateTime != nil && mtime == *msg.LastModifiedDateTime {
+
+				for _, reply := range msg.Replies {
+					if msgTimeReply, ok := msgInfo.replies[*reply.ID]; ok {
+						// timeStamps vergleichen, hat die replies lasmodifdate
+						// creattime skip
+						if msgTimeReply == *msgTime(&reply) {
+							continue
+						}
+						// msg reply wurde verändert
+						// veränderung in die map reinschreiben (time update für die reply-ID)
+						msgInfo.replies[*reply.ID] = *msgTime(&reply)
+					} else {
+						//sie neu ist sende sie weiter
+						// neue reply muss in die reply map mit id und time reingeschrieben werden
+						msgInfo.replies[*reply.ID] = *msgTime(&reply)
+
+					}
+				}
+				// ist die reply vorhanden
+				if msgInfo.mTime == *msg.CreatedDateTime && msgInfo.replies == nil {
+					continue
+				}
+
+				// ------------------------------------------------- //
+				if msg.LastModifiedDateTime == nil && msgInfo.mTime == *msg.CreatedDateTime {
+					continue
+				}
+				if msg.LastModifiedDateTime != nil && msgInfo.mTime == *msg.LastModifiedDateTime {
 					continue
 				}
 			}
 
+			// toplevel msg is new or changed
 			if b.GetBool("debug") {
 				b.Log.Debug("Msg dump: ", spew.Sdump(msg))
 			}
@@ -174,16 +292,19 @@ func (b *Bmsteams) poll(channelName string) error {
 				continue
 			}
 
+			msgInfo := teamsMessageInfo{mTime: *msg.CreatedDateTime, replies: make(map[string]time.Time)}
+
 			if *msg.From.User.ID == b.botID {
 				b.Log.Debug("skipping own message")
-				msgmap[*msg.ID] = *msg.CreatedDateTime
 				continue
 			}
 
-			msgmap[*msg.ID] = *msg.CreatedDateTime
 			if msg.LastModifiedDateTime != nil {
-				msgmap[*msg.ID] = *msg.LastModifiedDateTime
+				msgInfo.mTime = *msg.LastModifiedDateTime
 			}
+			// prüfen ob die massage vorhanden ist wenn ja dan an die map weitergeben, wenn nicht skip
+			msgmap[*msg.ID] = msgInfo
+
 			b.Log.Debugf("<= Sending message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
 			text := b.convertToMD(*msg.Body.Content)
 			rmsg := config.Message{
@@ -200,6 +321,25 @@ func (b *Bmsteams) poll(channelName string) error {
 			b.handleAttachments(&rmsg, msg)
 			b.Log.Debugf("<= Message is %#v", rmsg)
 			b.Remote <- rmsg
+
+			// fake autoresponder
+			if strings.HasPrefix(text, "replyPlease") {
+				rmsg := config.Message{
+					Username: *msg.From.User.DisplayName,
+					Text:     "Hier ist deine Antwort Junge",
+					Channel:  channelName,
+					Account:  b.Account,
+					Avatar:   "",
+					UserID:   *msg.From.User.ID,
+					ID:       *msg.ID + "xxx",
+					ParentID: *msg.ID,
+					Extra:    make(map[string][]interface{}),
+				}
+
+				b.handleAttachments(&rmsg, msg)
+				b.Log.Debugf("<= fake autoresponder Message is %#v", rmsg)
+				b.Remote <- rmsg
+			}
 		}
 		time.Sleep(time.Second * 5)
 	}
@@ -227,3 +367,32 @@ func (b *Bmsteams) convertToMD(text string) string {
 	}
 	return sb.String()
 }
+
+// func formatTeamsEmoji(emoji string) string {
+
+// 	emojiMap := map[string]string{
+// 	":+1:":		  		"like",
+// 	":blush:":	  		"😊",
+// 	":colpari_it:":		":colpari_it:",
+// 	":eyes:":			"👀",
+// 	//weitere Emojis
+// 	}
+// 	for key, value := range emojiMap {
+// 		fmt.Println(key, "hat den Wert", value)
+// 	}
+// }
+
+// func (b *Bmsteams) sendReaction(channelName string, messageID string, reaction string) error {
+// 	// Format the emoji in the correct format for Mattermost
+// 	formattedReaction := formatTeamsEmoji(reaction)
+
+// 	// Add colons around the formatted emoji
+// 	reactionMessage := fmt.Sprintf(":%s:", formattedReaction)
+
+// 	// Send the reaction to the channel using Mattermost API
+// 	_, err := b.sendMessage(channelName, reactionMessage, messageID)
+// 	if err != nil {
+// 		b.Log.Errorf("Failed to send reaction %s to message %s in channel %s: %s", reaction, messageID, channelName, err.Error())
+// 	}
+// 	return err
+// }
