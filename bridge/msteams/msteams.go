@@ -240,31 +240,50 @@ func (b *Bmsteams) poll(channelName string) error {
 			msg := res[i]
 			if msgInfo, ok := msgmap[*msg.ID]; ok {
 
-				// skip if we already know the message id with that timestamp
-				// prüfen ob die replies verändert wurden oder nicht
-				// replies zuerst prüfen
-				// vier zustände gelöscht/nicht vorhanden/neu/ reply vorhanden und nicht verändert
-				//
-
-				// ist die reply verändert wurden
-				if msgInfo.mTime == *msg.LastModifiedDateTime && msgInfo.replies != nil {
-					continue
-				}
-
 				for _, reply := range msg.Replies {
 					if msgTimeReply, ok := msgInfo.replies[*reply.ID]; ok {
 						// timeStamps vergleichen, hat die replies lasmodifdate
 						// creattime skip
+						b.Log.Debugf("<= checking reply %#v", reply.ID)
 						if msgTimeReply == *msgTime(&reply) {
+							b.Log.Debugf("<= unchanged reply %#v", reply.ID)
 							continue
+
 						}
 						// msg reply wurde verändert
 						// veränderung in die map reinschreiben (time update für die reply-ID)
 						msgInfo.replies[*reply.ID] = *msgTime(&reply)
+						replyText := b.convertToMD(*reply.Body.Content)
+						changedReplyObject := config.Message{
+							Username: *reply.From.User.DisplayName,
+							Text:     replyText,
+							Channel:  channelName,
+							Account:  b.Account,
+							Avatar:   "",
+							UserID:   *reply.From.User.ID,
+							ID:       *reply.ID,
+							ParentID: *msg.ID,
+						}
+						b.Remote <- changedReplyObject
+						b.Log.Debugf("<= New reply Message is %#v", changedReplyObject)
+						// b.Remote <-
 					} else {
-						//sie neu ist sende sie weiter
 						// neue reply muss in die reply map mit id und time reingeschrieben werden
 						msgInfo.replies[*reply.ID] = *msgTime(&reply)
+
+						replyText := b.convertToMD(*reply.Body.Content)
+						newReplyObject := config.Message{
+							Username: *reply.From.User.DisplayName,
+							Text:     replyText,
+							Channel:  channelName,
+							Account:  b.Account,
+							Avatar:   "",
+							UserID:   *reply.From.User.ID,
+							ID:       *reply.ID,
+							ParentID: *msg.ID,
+						}
+						b.Remote <- newReplyObject
+						b.Log.Debugf("<= New reply Message is %#v", newReplyObject)
 
 					}
 				}
@@ -317,29 +336,9 @@ func (b *Bmsteams) poll(channelName string) error {
 				ID:       *msg.ID,
 				Extra:    make(map[string][]interface{}),
 			}
-
 			b.handleAttachments(&rmsg, msg)
 			b.Log.Debugf("<= Message is %#v", rmsg)
 			b.Remote <- rmsg
-
-			// fake autoresponder
-			if strings.HasPrefix(text, "replyPlease") {
-				rmsg := config.Message{
-					Username: *msg.From.User.DisplayName,
-					Text:     "Hier ist deine Antwort Junge",
-					Channel:  channelName,
-					Account:  b.Account,
-					Avatar:   "",
-					UserID:   *msg.From.User.ID,
-					ID:       *msg.ID + "xxx",
-					ParentID: *msg.ID,
-					Extra:    make(map[string][]interface{}),
-				}
-
-				b.handleAttachments(&rmsg, msg)
-				b.Log.Debugf("<= fake autoresponder Message is %#v", rmsg)
-				b.Remote <- rmsg
-			}
 		}
 		time.Sleep(time.Second * 5)
 	}
