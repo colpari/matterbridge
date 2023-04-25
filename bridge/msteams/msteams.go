@@ -171,19 +171,13 @@ func createMapReplies() map[string]time.Time {
 }
 
 func updateMsgToplevel(toplevelMsg *msgraph.ChatMessage, msgToplevelInfo *teamsMessageInfo) {
-	msgToplevelInfo.mTime = *toplevelMsg.CreatedDateTime
-	if toplevelMsg.LastModifiedDateTime != nil {
-		msgToplevelInfo.mTime = *toplevelMsg.LastModifiedDateTime
-	}
+	msgToplevelInfo.mTime = *msgTime(toplevelMsg)
 }
 
 func updateMsgReplies(msg *msgraph.ChatMessage, msgRepliesInfo *teamsMessageInfo) {
 	mapReplies := createMapReplies()
 	for _, reply := range msg.Replies {
-		mapReplies[*reply.ID] = *reply.CreatedDateTime
-		if reply.LastModifiedDateTime != nil {
-			mapReplies[*reply.ID] = *reply.LastModifiedDateTime
-		}
+		mapReplies[*reply.ID] = *msgTime(&reply)
 	}
 	msgRepliesInfo.replies = mapReplies // nur im ersten mal
 }
@@ -192,6 +186,10 @@ func updateMsgReplies(msg *msgraph.ChatMessage, msgRepliesInfo *teamsMessageInfo
 func msgTime(graphMsg *msgraph.ChatMessage) *time.Time {
 	if graphMsg.LastModifiedDateTime != nil {
 		return graphMsg.LastModifiedDateTime
+	}
+
+	if graphMsg.DeletedDateTime != nil {
+		return graphMsg.DeletedDateTime
 	}
 
 	return graphMsg.CreatedDateTime
@@ -235,40 +233,60 @@ func (b *Bmsteams) poll(channelName string) error {
 			return err
 		}
 		// check top level messages from oldest to newest
-		//
 		for i := len(res) - 1; i >= 0; i-- {
 			msg := res[i]
+			b.Log.Debugf("\n\n<= toplevel is ID %s", *msg.ID)
 			if msgInfo, ok := msgmap[*msg.ID]; ok {
-
+				repliesMapID := make(map[string]int)
 				for _, reply := range msg.Replies {
+					// update der Map
+					repliesMapID[*reply.ID] = 2
 					if msgTimeReply, ok := msgInfo.replies[*reply.ID]; ok {
 						// timeStamps vergleichen, hat die replies lasmodifdate
 						// creattime skip
-						b.Log.Debugf("<= checking reply %#v", reply.ID)
+						b.Log.Debugf("<= checking reply %s", *reply.ID)
 						if msgTimeReply == *msgTime(&reply) {
-							b.Log.Debugf("<= unchanged reply %#v", reply.ID)
+							b.Log.Debugf("<= unchanged reply %s", *reply.ID)
 							continue
 
 						}
-						// msg reply wurde verändert
-						// veränderung in die map reinschreiben (time update für die reply-ID)
+
+						// changed or deleted reply - update tiome stamp and pass on
 						msgInfo.replies[*reply.ID] = *msgTime(&reply)
-						replyText := b.convertToMD(*reply.Body.Content)
-						changedReplyObject := config.Message{
-							Username: *reply.From.User.DisplayName,
-							Text:     replyText,
-							Channel:  channelName,
-							Account:  b.Account,
-							Avatar:   "",
-							UserID:   *reply.From.User.ID,
-							ID:       *reply.ID,
-							ParentID: *msg.ID,
+						if reply.DeletedDateTime == nil {
+
+							// time updated for changed reply-ID
+							replyText := b.convertToMD(*reply.Body.Content)
+							changedReplyObject := config.Message{
+								Username: *reply.From.User.DisplayName,
+								Text:     replyText,
+								Channel:  channelName,
+								Account:  b.Account,
+								Avatar:   "",
+								UserID:   *reply.From.User.ID,
+								ID:       *reply.ID,
+								ParentID: *msg.ID,
+							}
+							b.Remote <- changedReplyObject
+							b.Log.Debugf("<= Updated reply Message ID is %s", *reply.ID)
+						} else {
+
+							deleteReplyObject := config.Message{
+								Channel: channelName,
+								Text:    "DeleteMe!",
+								Account: b.Account,
+								Avatar:  "",
+								Event:   config.EventMsgDelete,
+								ID:      *reply.ID,
+							}
+							b.Remote <- deleteReplyObject
+							b.Log.Debugf("<= deleted reply Message is %s", deleteReplyObject)
+							//delete(msgInfo.replies, replyID)
 						}
-						b.Remote <- changedReplyObject
-						b.Log.Debugf("<= New reply Message is %#v", changedReplyObject)
 						// b.Remote <-
 					} else {
-						// neue reply muss in die reply map mit id und time reingeschrieben werden
+
+						// new reply
 						msgInfo.replies[*reply.ID] = *msgTime(&reply)
 
 						replyText := b.convertToMD(*reply.Body.Content)
@@ -283,10 +301,22 @@ func (b *Bmsteams) poll(channelName string) error {
 							ParentID: *msg.ID,
 						}
 						b.Remote <- newReplyObject
-						b.Log.Debugf("<= New reply Message is %#v", newReplyObject)
+						b.Log.Debugf("<= New reply Message ID is %s", *reply.ID)
 
 					}
+
+					// Hinzufügen von IDs zur Map
+
 				}
+				// schauen welche ids msgInfo.replies.keys != set wo die reply id gemerkt sind
+				// Überprüfen, ob eine ID in der Map enthalten ist
+				// eine schleife über msgInfo.replies[*reply.ID] vergleichen ob das mit der repliesMapID übereinstimmt und wenn nicht dann löschen
+				// for  _, rId := range msgInfo.replies[*reply.ID]{
+				// 	if rId != repliesMapID{
+				// 		b.Log.Debugf("Die rID %#v ist nicht die gleiche die in der repliesMapID %#v vorhanden ist ", rId, repliesMapID )
+				// 	}
+				// }
+
 				// ist die reply vorhanden
 				if msgInfo.mTime == *msg.CreatedDateTime && msgInfo.replies == nil {
 					continue
