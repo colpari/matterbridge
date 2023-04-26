@@ -174,10 +174,15 @@ func updateMsgToplevel(toplevelMsg *msgraph.ChatMessage, msgToplevelInfo *teamsM
 	msgToplevelInfo.mTime = *msgTime(toplevelMsg)
 }
 
-func updateMsgReplies(msg *msgraph.ChatMessage, msgRepliesInfo *teamsMessageInfo) {
+func updateMsgReplies(msg *msgraph.ChatMessage, msgRepliesInfo *teamsMessageInfo, b *Bmsteams) {
 	mapReplies := createMapReplies()
 	for _, reply := range msg.Replies {
-		mapReplies[*reply.ID] = *msgTime(&reply)
+		if skipOwnMessage(msg, b) {
+			continue
+		} else {
+			mapReplies[*reply.ID] = *msgTime(&reply)
+		}
+
 	}
 	msgRepliesInfo.replies = mapReplies // nur im ersten mal
 }
@@ -195,6 +200,17 @@ func msgTime(graphMsg *msgraph.ChatMessage) *time.Time {
 	return graphMsg.CreatedDateTime
 }
 
+func skipOwnMessage(msg *msgraph.ChatMessage, b *Bmsteams) bool {
+	if msg.From == nil || msg.From.User == nil {
+		return false
+	}
+	if *msg.From.User.ID == b.botID {
+		b.Log.Debug("skipping own message")
+		return true // skip own message
+	}
+	return false // don't skip
+}
+
 //nolint:gocognit
 func (b *Bmsteams) poll(channelName string) error {
 	msgmap := make(map[string]teamsMessageInfo)
@@ -203,26 +219,20 @@ func (b *Bmsteams) poll(channelName string) error {
 	if err != nil {
 		return err
 	}
-	// Verwalten von toplevel map das verwalten der map (finde nachricht, prüfe Zeitstemple von Nachricht, füge Nachrichte ein)
-	// code wenn noch nicht in der map ist. Wenns neue Nachricht ist.
-	// creat methode für mapReplies wenn neue nachricht
-	// Verwalten von replies map  mit dem gleichen code
-
-	// für jede top-level nachricht
-	//		prüfe ob es auf teams-seite änderungen an den replies gibt
-	//	falls ja
-	//		sende änderungen weiter zur bridge (neuer kommentar, kommentar geändert, kommentar gelöscht)
-	//		update entsprechende maps
-	// zwei listen/map vergleichen (res WICHTIG)
-	// variablen umbennen
 
 	for _, msgToplevel := range res {
-		msgToplevelInfo := msgmap[*msgToplevel.ID]
-		msgToplevelInfo.mTime = *msgToplevel.CreatedDateTime
-		updateMsgToplevel(&msgToplevel, &msgToplevelInfo)
-		updateMsgReplies(&msgToplevel, &msgToplevelInfo)
-		msgmap[*msgToplevel.ID] = msgToplevelInfo
+		if skipOwnMessage(&msgToplevel, b) {
+			continue
+		} else {
+			msgToplevelInfo := msgmap[*msgToplevel.ID]
+			msgToplevelInfo.mTime = *msgToplevel.CreatedDateTime
+			updateMsgToplevel(&msgToplevel, &msgToplevelInfo)
+			updateMsgReplies(&msgToplevel, &msgToplevelInfo, b)
+			msgmap[*msgToplevel.ID] = msgToplevelInfo
+		}
 	}
+
+	// Annahme: botID und msg sind bereits deklariert und initialisiert
 
 	time.Sleep(time.Second * 5)
 	b.Log.Debug("polling for messages")
@@ -236,98 +246,91 @@ func (b *Bmsteams) poll(channelName string) error {
 		for i := len(res) - 1; i >= 0; i-- {
 			msg := res[i]
 			b.Log.Debugf("\n\n<= toplevel is ID %s", *msg.ID)
-			if msgInfo, ok := msgmap[*msg.ID]; ok {
-				repliesMapID := make(map[string]int)
-				for _, reply := range msg.Replies {
-					// update der Map
-					repliesMapID[*reply.ID] = 2
-					if msgTimeReply, ok := msgInfo.replies[*reply.ID]; ok {
-						// timeStamps vergleichen, hat die replies lasmodifdate
-						// creattime skip
-						b.Log.Debugf("<= checking reply %s", *reply.ID)
-						if msgTimeReply == *msgTime(&reply) {
-							b.Log.Debugf("<= unchanged reply %s", *reply.ID)
+			if skipOwnMessage(&msg, b) {
+				continue
+			} else {
+				if msgInfo, ok := msgmap[*msg.ID]; ok {
+					for _, reply := range msg.Replies {
+						if skipOwnMessage(&reply, b) {
 							continue
-
-						}
-
-						// changed or deleted reply - update tiome stamp and pass on
-						msgInfo.replies[*reply.ID] = *msgTime(&reply)
-						if reply.DeletedDateTime == nil {
-
-							// time updated for changed reply-ID
-							replyText := b.convertToMD(*reply.Body.Content)
-							changedReplyObject := config.Message{
-								Username: *reply.From.User.DisplayName,
-								Text:     replyText,
-								Channel:  channelName,
-								Account:  b.Account,
-								Avatar:   "",
-								UserID:   *reply.From.User.ID,
-								ID:       *reply.ID,
-								ParentID: *msg.ID,
-							}
-							b.Remote <- changedReplyObject
-							b.Log.Debugf("<= Updated reply Message ID is %s", *reply.ID)
 						} else {
+							if msgTimeReply, ok := msgInfo.replies[*reply.ID]; ok {
+								// timeStamps vergleichen, hat die replies lasmodifdate
+								// creattime skip
+								b.Log.Debugf("<= checking reply %s", *reply.ID)
+								if msgTimeReply == *msgTime(&reply) {
+									b.Log.Debugf("<= unchanged reply %s", *reply.ID)
+									continue
 
-							deleteReplyObject := config.Message{
-								Channel: channelName,
-								Text:    "DeleteMe!",
-								Account: b.Account,
-								Avatar:  "",
-								Event:   config.EventMsgDelete,
-								ID:      *reply.ID,
+								}
+
+								// changed or deleted reply - update tiome stamp and pass on
+								msgInfo.replies[*reply.ID] = *msgTime(&reply)
+								if reply.DeletedDateTime == nil {
+
+									// time updated for changed reply-ID
+									replyText := b.convertToMD(*reply.Body.Content)
+									changedReplyObject := config.Message{
+										Username: *reply.From.User.DisplayName,
+										Text:     replyText,
+										Channel:  channelName,
+										Account:  b.Account,
+										Avatar:   "",
+										UserID:   *reply.From.User.ID,
+										ID:       *reply.ID,
+										ParentID: *msg.ID,
+									}
+									b.Remote <- changedReplyObject
+									b.Log.Debugf("<= Updated reply Message ID is %s", *reply.ID)
+								} else {
+
+									deleteReplyObject := config.Message{
+										Channel: channelName,
+										Text:    "DeleteMe!",
+										Account: b.Account,
+										Avatar:  "",
+										Event:   config.EventMsgDelete,
+										ID:      *reply.ID,
+									}
+									b.Remote <- deleteReplyObject
+									b.Log.Debugf("<= deleted reply Message is %s", deleteReplyObject)
+									//delete(msgInfo.replies, replyID)
+								}
+								// b.Remote <-
+							} else {
+
+								// new reply
+								msgInfo.replies[*reply.ID] = *msgTime(&reply)
+
+								replyText := b.convertToMD(*reply.Body.Content)
+								newReplyObject := config.Message{
+									Username: *reply.From.User.DisplayName,
+									Text:     replyText,
+									Channel:  channelName,
+									Account:  b.Account,
+									Avatar:   "",
+									UserID:   *reply.From.User.ID,
+									ID:       *reply.ID,
+									ParentID: *msg.ID,
+								}
+								b.Remote <- newReplyObject
+								b.Log.Debugf("<= New reply Message ID is %s", *reply.ID)
 							}
-							b.Remote <- deleteReplyObject
-							b.Log.Debugf("<= deleted reply Message is %s", deleteReplyObject)
-							//delete(msgInfo.replies, replyID)
 						}
-						// b.Remote <-
-					} else {
-
-						// new reply
-						msgInfo.replies[*reply.ID] = *msgTime(&reply)
-
-						replyText := b.convertToMD(*reply.Body.Content)
-						newReplyObject := config.Message{
-							Username: *reply.From.User.DisplayName,
-							Text:     replyText,
-							Channel:  channelName,
-							Account:  b.Account,
-							Avatar:   "",
-							UserID:   *reply.From.User.ID,
-							ID:       *reply.ID,
-							ParentID: *msg.ID,
-						}
-						b.Remote <- newReplyObject
-						b.Log.Debugf("<= New reply Message ID is %s", *reply.ID)
-
 					}
 
-					// Hinzufügen von IDs zur Map
+					// ist die reply vorhanden
+					if msgInfo.mTime == *msg.CreatedDateTime && msgInfo.replies == nil {
+						continue
+					}
 
-				}
-				// schauen welche ids msgInfo.replies.keys != set wo die reply id gemerkt sind
-				// Überprüfen, ob eine ID in der Map enthalten ist
-				// eine schleife über msgInfo.replies[*reply.ID] vergleichen ob das mit der repliesMapID übereinstimmt und wenn nicht dann löschen
-				// for  _, rId := range msgInfo.replies[*reply.ID]{
-				// 	if rId != repliesMapID{
-				// 		b.Log.Debugf("Die rID %#v ist nicht die gleiche die in der repliesMapID %#v vorhanden ist ", rId, repliesMapID )
-				// 	}
-				// }
-
-				// ist die reply vorhanden
-				if msgInfo.mTime == *msg.CreatedDateTime && msgInfo.replies == nil {
-					continue
-				}
-
-				// ------------------------------------------------- //
-				if msg.LastModifiedDateTime == nil && msgInfo.mTime == *msg.CreatedDateTime {
-					continue
-				}
-				if msg.LastModifiedDateTime != nil && msgInfo.mTime == *msg.LastModifiedDateTime {
-					continue
+					// ------------------------------------------------- //
+					if msg.LastModifiedDateTime == nil && msgInfo.mTime == *msg.CreatedDateTime {
+						continue
+					}
+					if msg.LastModifiedDateTime != nil && msgInfo.mTime == *msg.LastModifiedDateTime {
+						continue
+					}
 				}
 			}
 
