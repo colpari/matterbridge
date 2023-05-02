@@ -276,9 +276,11 @@ func (b *Bmsteams) poll(channelName string) error {
 									UserID:   *reply.From.User.ID,
 									ID:       *reply.ID,
 									ParentID: *msg.ID,
+									Extra:    make(map[string][]interface{}),
 								}
-								b.Remote <- changedReplyObject
+								b.handleAttachments(&changedReplyObject, reply)
 								b.Log.Debugf("<= Updated reply Message ID is %s", *reply.ID)
+								b.Remote <- changedReplyObject
 							} else {
 
 								deleteReplyObject := config.Message{
@@ -289,8 +291,9 @@ func (b *Bmsteams) poll(channelName string) error {
 									Event:   config.EventMsgDelete,
 									ID:      *reply.ID,
 								}
-								b.Remote <- deleteReplyObject
+								//b.handleAttachments(&deleteReplyObject, msg)
 								b.Log.Debugf("<= deleted reply Message is %s", deleteReplyObject)
+								b.Remote <- deleteReplyObject
 								//delete(msgInfo.replies, replyID)
 							}
 						}
@@ -310,9 +313,12 @@ func (b *Bmsteams) poll(channelName string) error {
 								UserID:   *reply.From.User.ID,
 								ID:       *reply.ID,
 								ParentID: *msg.ID,
+								Extra:    make(map[string][]interface{}),
 							}
-							b.Remote <- newReplyObject
+							b.handleAttachments(&newReplyObject, reply)
 							b.Log.Debugf("<= New reply Message ID is %s", *reply.ID)
+							b.Remote <- newReplyObject
+
 						}
 					}
 				}
