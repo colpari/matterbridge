@@ -177,11 +177,11 @@ func updateMsgToplevel(toplevelMsg *msgraph.ChatMessage, msgToplevelInfo *teamsM
 func updateMsgReplies(msg *msgraph.ChatMessage, msgRepliesInfo *teamsMessageInfo, b *Bmsteams) {
 	mapReplies := createMapReplies()
 	for _, reply := range msg.Replies {
-		if skipOwnMessage(msg, b) {
-			continue
-		} else {
-			mapReplies[*reply.ID] = *msgTime(&reply)
-		}
+		// if b.skipOwnMessage(msg) {
+		// 	continue
+		// } else {
+		mapReplies[*reply.ID] = *msgTime(&reply)
+		// }
 
 	}
 	msgRepliesInfo.replies = mapReplies // nur im ersten mal
@@ -200,7 +200,7 @@ func msgTime(graphMsg *msgraph.ChatMessage) *time.Time {
 	return graphMsg.CreatedDateTime
 }
 
-func skipOwnMessage(msg *msgraph.ChatMessage, b *Bmsteams) bool {
+func (b *Bmsteams) skipOwnMessage(msg *msgraph.ChatMessage) bool {
 	if msg.From == nil || msg.From.User == nil {
 		return false
 	}
@@ -221,15 +221,15 @@ func (b *Bmsteams) poll(channelName string) error {
 	}
 
 	for _, msgToplevel := range res {
-		if skipOwnMessage(&msgToplevel, b) {
-			continue
-		} else {
-			msgToplevelInfo := msgmap[*msgToplevel.ID]
-			msgToplevelInfo.mTime = *msgToplevel.CreatedDateTime
-			updateMsgToplevel(&msgToplevel, &msgToplevelInfo)
-			updateMsgReplies(&msgToplevel, &msgToplevelInfo, b)
-			msgmap[*msgToplevel.ID] = msgToplevelInfo
-		}
+		// if b.skipOwnMessage(&msgToplevel) {
+		// 	continue
+		// } else {
+		msgToplevelInfo := msgmap[*msgToplevel.ID]
+		msgToplevelInfo.mTime = *msgToplevel.CreatedDateTime
+		updateMsgToplevel(&msgToplevel, &msgToplevelInfo)
+		updateMsgReplies(&msgToplevel, &msgToplevelInfo, b)
+		msgmap[*msgToplevel.ID] = msgToplevelInfo
+		// }
 	}
 
 	// Annahme: botID und msg sind bereits deklariert und initialisiert
@@ -245,65 +245,29 @@ func (b *Bmsteams) poll(channelName string) error {
 		// check top level messages from oldest to newest
 		for i := len(res) - 1; i >= 0; i-- {
 			msg := res[i]
+			//msg.Reactions
 			b.Log.Debugf("\n\n<= toplevel is ID %s", *msg.ID)
-			if skipOwnMessage(&msg, b) {
-				continue
-			} else {
-				if msgInfo, ok := msgmap[*msg.ID]; ok {
-					for _, reply := range msg.Replies {
-						if skipOwnMessage(&reply, b) {
+			if msgInfo, ok := msgmap[*msg.ID]; ok {
+				for _, reply := range msg.Replies {
+					//reply.Reactions
+					if msgTimeReply, ok := msgInfo.replies[*reply.ID]; ok {
+						// timeStamps vergleichen, hat die replies lasmodifdate
+						// creattime skip
+						b.Log.Debugf("<= checking reply %s", *reply.ID)
+						if msgTimeReply == *msgTime(&reply) {
+							b.Log.Debugf("<= unchanged reply %s", *reply.ID)
 							continue
-						} else {
-							if msgTimeReply, ok := msgInfo.replies[*reply.ID]; ok {
-								// timeStamps vergleichen, hat die replies lasmodifdate
-								// creattime skip
-								b.Log.Debugf("<= checking reply %s", *reply.ID)
-								if msgTimeReply == *msgTime(&reply) {
-									b.Log.Debugf("<= unchanged reply %s", *reply.ID)
-									continue
 
-								}
+						}
 
-								// changed or deleted reply - update tiome stamp and pass on
-								msgInfo.replies[*reply.ID] = *msgTime(&reply)
-								if reply.DeletedDateTime == nil {
+						// changed or deleted reply - update tiome stamp and pass on
+						msgInfo.replies[*reply.ID] = *msgTime(&reply)
+						if !b.skipOwnMessage(&reply) {
+							if reply.DeletedDateTime == nil {
 
-									// time updated for changed reply-ID
-									replyText := b.convertToMD(*reply.Body.Content)
-									changedReplyObject := config.Message{
-										Username: *reply.From.User.DisplayName,
-										Text:     replyText,
-										Channel:  channelName,
-										Account:  b.Account,
-										Avatar:   "",
-										UserID:   *reply.From.User.ID,
-										ID:       *reply.ID,
-										ParentID: *msg.ID,
-									}
-									b.Remote <- changedReplyObject
-									b.Log.Debugf("<= Updated reply Message ID is %s", *reply.ID)
-								} else {
-
-									deleteReplyObject := config.Message{
-										Channel: channelName,
-										Text:    "DeleteMe!",
-										Account: b.Account,
-										Avatar:  "",
-										Event:   config.EventMsgDelete,
-										ID:      *reply.ID,
-									}
-									b.Remote <- deleteReplyObject
-									b.Log.Debugf("<= deleted reply Message is %s", deleteReplyObject)
-									//delete(msgInfo.replies, replyID)
-								}
-								// b.Remote <-
-							} else {
-
-								// new reply
-								msgInfo.replies[*reply.ID] = *msgTime(&reply)
-
+								// time updated for changed reply-ID
 								replyText := b.convertToMD(*reply.Body.Content)
-								newReplyObject := config.Message{
+								changedReplyObject := config.Message{
 									Username: *reply.From.User.DisplayName,
 									Text:     replyText,
 									Channel:  channelName,
@@ -313,50 +277,78 @@ func (b *Bmsteams) poll(channelName string) error {
 									ID:       *reply.ID,
 									ParentID: *msg.ID,
 								}
-								b.Remote <- newReplyObject
-								b.Log.Debugf("<= New reply Message ID is %s", *reply.ID)
+								b.Remote <- changedReplyObject
+								b.Log.Debugf("<= Updated reply Message ID is %s", *reply.ID)
+							} else {
+
+								deleteReplyObject := config.Message{
+									Channel: channelName,
+									Text:    "DeleteMe!",
+									Account: b.Account,
+									Avatar:  "",
+									Event:   config.EventMsgDelete,
+									ID:      *reply.ID,
+								}
+								b.Remote <- deleteReplyObject
+								b.Log.Debugf("<= deleted reply Message is %s", deleteReplyObject)
+								//delete(msgInfo.replies, replyID)
 							}
 						}
-					}
+					} else {
 
-					// ist die reply vorhanden
-					if msgInfo.mTime == *msg.CreatedDateTime && msgInfo.replies == nil {
-						continue
-					}
+						// new reply
+						msgInfo.replies[*reply.ID] = *msgTime(&reply)
 
-					// ------------------------------------------------- //
-					if msg.LastModifiedDateTime == nil && msgInfo.mTime == *msg.CreatedDateTime {
-						continue
+						if !b.skipOwnMessage(&reply) {
+							replyText := b.convertToMD(*reply.Body.Content)
+							newReplyObject := config.Message{
+								Username: *reply.From.User.DisplayName,
+								Text:     replyText,
+								Channel:  channelName,
+								Account:  b.Account,
+								Avatar:   "",
+								UserID:   *reply.From.User.ID,
+								ID:       *reply.ID,
+								ParentID: *msg.ID,
+							}
+							b.Remote <- newReplyObject
+							b.Log.Debugf("<= New reply Message ID is %s", *reply.ID)
+						}
 					}
-					if msg.LastModifiedDateTime != nil && msgInfo.mTime == *msg.LastModifiedDateTime {
-						continue
-					}
+				}
+
+				// ist die reply vorhanden
+				// if msgInfo.mTime == *msg.CreatedDateTime && msgInfo.replies == nil {
+				// 	continue
+				// }
+
+				// ------------------------------------------------- //
+				if msgInfo.mTime == *msgTime(&msg) {
+					continue
+				} else {
+					msgInfo.mTime = *msgTime(&msg)
+				}
+
+			} else {
+				// toplevel msg is new
+				if b.GetBool("debug") {
+					b.Log.Debug("Msg dump: ", spew.Sdump(msg))
+				}
+
+				msgInfo := teamsMessageInfo{mTime: *msgTime(&msg), replies: make(map[string]time.Time)}
+				msgmap[*msg.ID] = msgInfo
+
+				if b.skipOwnMessage(&msg) {
+					continue
+				}
+
+				// skip non-user message for now.
+				if msg.From == nil || msg.From.User == nil {
+					continue
 				}
 			}
 
-			// toplevel msg is new or changed
-			if b.GetBool("debug") {
-				b.Log.Debug("Msg dump: ", spew.Sdump(msg))
-			}
-
-			// skip non-user message for now.
-			if msg.From == nil || msg.From.User == nil {
-				continue
-			}
-
-			msgInfo := teamsMessageInfo{mTime: *msg.CreatedDateTime, replies: make(map[string]time.Time)}
-
-			if *msg.From.User.ID == b.botID {
-				b.Log.Debug("skipping own message")
-				continue
-			}
-
-			if msg.LastModifiedDateTime != nil {
-				msgInfo.mTime = *msg.LastModifiedDateTime
-			}
-			// prüfen ob die massage vorhanden ist wenn ja dan an die map weitergeben, wenn nicht skip
-			msgmap[*msg.ID] = msgInfo
-
+			// we did not 'continue' above so this message really needs to be sent
 			b.Log.Debugf("<= Sending message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
 			text := b.convertToMD(*msg.Body.Content)
 			rmsg := config.Message{
@@ -399,32 +391,3 @@ func (b *Bmsteams) convertToMD(text string) string {
 	}
 	return sb.String()
 }
-
-// func formatTeamsEmoji(emoji string) string {
-
-// 	emojiMap := map[string]string{
-// 	":+1:":		  		"like",
-// 	":blush:":	  		"😊",
-// 	":colpari_it:":		":colpari_it:",
-// 	":eyes:":			"👀",
-// 	//weitere Emojis
-// 	}
-// 	for key, value := range emojiMap {
-// 		fmt.Println(key, "hat den Wert", value)
-// 	}
-// }
-
-// func (b *Bmsteams) sendReaction(channelName string, messageID string, reaction string) error {
-// 	// Format the emoji in the correct format for Mattermost
-// 	formattedReaction := formatTeamsEmoji(reaction)
-
-// 	// Add colons around the formatted emoji
-// 	reactionMessage := fmt.Sprintf(":%s:", formattedReaction)
-
-// 	// Send the reaction to the channel using Mattermost API
-// 	_, err := b.sendMessage(channelName, reactionMessage, messageID)
-// 	if err != nil {
-// 		b.Log.Errorf("Failed to send reaction %s to message %s in channel %s: %s", reaction, messageID, channelName, err.Error())
-// 	}
-// 	return err
-// }
