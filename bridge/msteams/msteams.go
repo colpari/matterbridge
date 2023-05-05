@@ -399,25 +399,6 @@ func (b *Bmsteams) poll(channelName string) error {
 				// wenn msg.DeletedDateTime nicht null oder 0(?) ist (also eine Zeit drin steht) dann wurde die TopLevelMSg
 				// gelöscht und wir müssen eine entsprechende config.Message schicken um sie auch in mm oder slack zu löschen
 
-				if msg.DeletedDateTime != nil {
-					b.Log.Debugf("<= Sending toplevel message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
-					text := b.convertToMD(*msg.Body.Content)
-					deletedTopLevelMsg := config.Message{
-						Username: *msg.From.User.DisplayName,
-						Text:     text,
-						Channel:  channelName,
-						Account:  b.Account,
-						Avatar:   "",
-						UserID:   *msg.From.User.ID,
-						ID:       *msg.ID,
-						Event:    config.EventMsgDelete,
-						Extra:    make(map[string][]interface{}),
-					}
-					//b.handleAttachments(&deletedTopLevelMsg, msg)
-					b.Log.Debugf("<= delete toplevel Message is %#v", deletedTopLevelMsg)
-					b.Remote <- deletedTopLevelMsg
-				}
-
 				// ------------------------------------------------- //
 				if msgInfo.mTime == *msgTime(&msg) {
 					continue
@@ -443,23 +424,43 @@ func (b *Bmsteams) poll(channelName string) error {
 					continue
 				}
 			}
-
-			// we did not 'continue' above so this message really needs to be sent
-			b.Log.Debugf("<= Sending message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
-			text := b.convertToMD(*msg.Body.Content)
-			rmsg := config.Message{
-				Username: *msg.From.User.DisplayName,
-				Text:     text,
-				Channel:  channelName,
-				Account:  b.Account,
-				Avatar:   "",
-				UserID:   *msg.From.User.ID,
-				ID:       *msg.ID,
-				Extra:    make(map[string][]interface{}),
+			if msg.DeletedDateTime == nil {
+				// we did not 'continue' above so this message really needs to be sent
+				b.Log.Debugf("<= Sending message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
+				text := b.convertToMD(*msg.Body.Content)
+				rmsg := config.Message{
+					Username: *msg.From.User.DisplayName,
+					Text:     text,
+					Channel:  channelName,
+					Account:  b.Account,
+					Avatar:   "",
+					UserID:   *msg.From.User.ID,
+					ID:       *msg.ID,
+					Extra:    make(map[string][]interface{}),
+				}
+				b.handleAttachments(&rmsg, msg)
+				b.Log.Debugf("<= Message is %#v", rmsg)
+				b.Remote <- rmsg
+			} else {
+				b.Log.Debugf("<= Sending toplevel message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
+				//text := b.convertToMD(*msg.Body.Content)
+				deletedTopLevelMsg := config.Message{
+					Username: *msg.From.User.DisplayName,
+					Text:     "DeleteMe!",
+					Channel:  channelName,
+					Account:  b.Account,
+					Avatar:   "",
+					UserID:   *msg.From.User.ID,
+					ID:       *msg.ID,
+					Event:    config.EventMsgDelete,
+					Extra:    make(map[string][]interface{}),
+				}
+				//b.handleAttachments(&deletedTopLevelMsg, msg)
+				b.Log.Debugf("<= delete toplevel Message is %#v", deletedTopLevelMsg)
+				b.Remote <- deletedTopLevelMsg
+				continue
 			}
-			b.handleAttachments(&rmsg, msg)
-			b.Log.Debugf("<= Message is %#v", rmsg)
-			b.Remote <- rmsg
+
 		}
 		time.Sleep(time.Second * 5)
 	}
