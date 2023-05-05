@@ -396,10 +396,27 @@ func (b *Bmsteams) poll(channelName string) error {
 					}
 				}
 
-				// ist die reply vorhanden
-				// if msgInfo.mTime == *msg.CreatedDateTime && msgInfo.replies == nil {
-				// 	continue
-				// }
+				// wenn msg.DeletedDateTime nicht null oder 0(?) ist (also eine Zeit drin steht) dann wurde die TopLevelMSg
+				// gelöscht und wir müssen eine entsprechende config.Message schicken um sie auch in mm oder slack zu löschen
+
+				if msg.DeletedDateTime != nil {
+					b.Log.Debugf("<= Sending toplevel message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
+					text := b.convertToMD(*msg.Body.Content)
+					deletedTopLevelMsg := config.Message{
+						Username: *msg.From.User.DisplayName,
+						Text:     text,
+						Channel:  channelName,
+						Account:  b.Account,
+						Avatar:   "",
+						UserID:   *msg.From.User.ID,
+						ID:       *msg.ID,
+						Event:    config.EventMsgDelete,
+						Extra:    make(map[string][]interface{}),
+					}
+					//b.handleAttachments(&deletedTopLevelMsg, msg)
+					b.Log.Debugf("<= delete toplevel Message is %#v", deletedTopLevelMsg)
+					b.Remote <- deletedTopLevelMsg
+				}
 
 				// ------------------------------------------------- //
 				if msgInfo.mTime == *msgTime(&msg) {
