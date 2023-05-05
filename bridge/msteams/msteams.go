@@ -173,12 +173,50 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 }
 
 func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
-	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().Request()
-	// Handle prefix hint for unthreaded messages.
 
+	// Handle prefix hint for unthreaded messages.
+	if msg.ParentNotFound() {
+		msg.ParentID = ""
+		msg.Text = fmt.Sprintf("[thread]: %s", msg.Text)
+	}
+
+	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().Request()
 	text := msg.Username + msg.Text
-	content := &msgraph.ItemBody{Content: &text}
-	rmsg := &msgraph.ChatMessage{Body: content}
+
+	var hostedContentsMessagesArr []msgraph.ChatMessageHostedContent
+
+	for i, file := range msg.Extra["file"] {
+		fileInfo := file.(config.FileInfo)
+		b.Log.Debugf("=> Receiving the fileInfo: %#v", fileInfo)
+		extIndex := strings.LastIndex(fileInfo.Name, ".")
+		ext := fileInfo.Name[extIndex:]
+		contentType := mime.TypeByExtension(ext)
+		b.Log.Debugf("=> Receiving  the content Type: %#v", contentType)
+		contentBytes := fileInfo.Data
+		encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
+		temporaryIdCounterInt := i
+		b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
+		temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
+		tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">"
+		text += tag
+		b.Log.Debugf("=> Output of the text for body content%#v", text)
+		// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
+		message := msgraph.ChatMessageHostedContent{
+			ContentType:               &contentType,
+			ContentBytes:              &encodedContentBytes,
+			MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
+		}
+
+		// Hinzufügen der Nachricht zum Array
+		hostedContentsMessagesArr = append(hostedContentsMessagesArr, message)
+	}
+
+	content := &msgraph.ItemBody{Content: &text, ContentType: msgraph.BodyTypePHTML}
+	rmsg := &msgraph.ChatMessage{
+		HostedContents: hostedContentsMessagesArr,
+		Body:           content,
+	}
+
 	res, err := ct.Add(b.ctx, rmsg)
 	if err != nil {
 		return "", err
