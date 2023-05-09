@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"html"
 	"mime"
 	"os"
 	"regexp"
@@ -131,45 +132,68 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 
 	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().Request()
 	text := msg.Username + msg.Text
-
+	quotedText := "<p>" + html.EscapeString(text) + "</p>"
+	replacementQuotedText := strings.Replace(quotedText, "\n", "<br>", -1)
 	var hostedContentsMessagesArr []msgraph.ChatMessageHostedContent
+	if msg.Extra["file"] != nil {
+		for i, file := range msg.Extra["file"] {
+			fileInfo := file.(config.FileInfo)
+			b.Log.Debugf("=> Receiving the fileInfo: %#v", fileInfo)
+			extIndex := strings.LastIndex(fileInfo.Name, ".")
+			ext := fileInfo.Name[extIndex:]
+			contentType := mime.TypeByExtension(ext)
+			if contentType != "image/jpg" && contentType != "image/jpeg" && contentType != "image/png" {
+				contentText := fmt.Sprintf("Datei %s wurde entfernt.", fileInfo.Name)
+				content := &msgraph.ItemBody{Content: &contentText}
+				rmsg := &msgraph.ChatMessage{
+					HostedContents: hostedContentsMessagesArr,
+					Body:           content,
+				}
 
-	for i, file := range msg.Extra["file"] {
-		fileInfo := file.(config.FileInfo)
-		b.Log.Debugf("=> Receiving the fileInfo: %#v", fileInfo)
-		extIndex := strings.LastIndex(fileInfo.Name, ".")
-		ext := fileInfo.Name[extIndex:]
-		contentType := mime.TypeByExtension(ext)
-		b.Log.Debugf("=> Receiving  the content Type: %#v", contentType)
-		contentBytes := fileInfo.Data
-		encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
-		temporaryIdCounterInt := i
-		b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
-		temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
-		tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">"
-		text += tag
-		b.Log.Debugf("=> Output of the text for body content%#v", text)
-		// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
-		message := msgraph.ChatMessageHostedContent{
-			ContentType:               &contentType,
-			ContentBytes:              &encodedContentBytes,
-			MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
+				ct.Add(b.ctx, rmsg)
+			}
+			b.Log.Debugf("=> Receiving  the content Type: %#v", contentType)
+			contentBytes := fileInfo.Data
+			encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
+			temporaryIdCounterInt := i
+			b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
+			temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
+			tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">" // break
+			replacementQuotedText += tag
+			b.Log.Debugf("=> Output of the text for body content%#v", replacementQuotedText)
+			// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
+			message := msgraph.ChatMessageHostedContent{
+				ContentType:               &contentType,
+				ContentBytes:              &encodedContentBytes,
+				MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
+			}
+
+			// Hinzufügen der Nachricht zum Array
+			hostedContentsMessagesArr = append(hostedContentsMessagesArr, message)
 		}
 
-		// Hinzufügen der Nachricht zum Array
-		hostedContentsMessagesArr = append(hostedContentsMessagesArr, message)
-	}
+		content := &msgraph.ItemBody{Content: &replacementQuotedText, ContentType: msgraph.BodyTypePHTML}
+		rmsg := &msgraph.ChatMessage{
+			HostedContents: hostedContentsMessagesArr,
+			Body:           content,
+		}
 
-	content := &msgraph.ItemBody{Content: &text, ContentType: msgraph.BodyTypePHTML}
-	rmsg := &msgraph.ChatMessage{
-		HostedContents: hostedContentsMessagesArr,
-		Body:           content,
+		res, err := ct.Add(b.ctx, rmsg)
+		if err != nil {
+			return "", err
+		}
+		return *res.ID, nil
+	} else {
+		content := &msgraph.ItemBody{Content: &replacementQuotedText, ContentType: msgraph.BodyTypePHTML}
+		rmsg := &msgraph.ChatMessage{
+			Body: content,
+		}
+		res, err := ct.Add(b.ctx, rmsg)
+		if err != nil {
+			return "", err
+		}
+		return *res.ID, nil
 	}
-	res, err := ct.Add(b.ctx, rmsg)
-	if err != nil {
-		return "", err
-	}
-	return *res.ID, nil
 }
 
 func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
@@ -284,6 +308,44 @@ func (b *Bmsteams) skipOwnMessage(msg *msgraph.ChatMessage) bool {
 	return false // don't skip
 }
 
+// func processingConfigMessage(channelName string, msg *msgraph.ChatMessage, b *Bmsteams, options ...func(*config.Message)) {
+// 	processingConfigMessage := config.Message{
+// 		Username: *msg.From.User.DisplayName,
+// 		Channel:  channelName,
+// 		Account:  b.Account,
+// 		Avatar:   "",
+// 		UserID:   *msg.From.User.ID,
+// 		ID:       *msg.ID,
+// 		Extra:    make(map[string][]interface{}),
+// 	}
+
+// 	// Optionale Parameter anwenden
+// 	for _, option := range options {
+// 		option(&processingConfigMessage)
+// 	}
+
+// 	b.Log.Debugf("<= delete toplevel Message is %#v", processingConfigMessage)
+// 	b.Remote <- processingConfigMessage
+// }
+
+// // optional parameters for the event field
+// func WithEvent(event string) func(*config.Message) {
+// 	return func(m *config.Message) {
+// 		m.Event = config.EventMsgDelete
+// 	}
+// }
+
+// // optional parameters for the text field
+// func WithText(b *Bmsteams, converter func(string) string) func(*config.Message) {
+// 	return func(m *config.Message) {
+// 		if m.Event == "msg_delete" {
+// 			m.Text = "DeleteMe!"
+// 		} else {
+// 			m.Text = b.convertToMD()
+// 		}
+// 	}
+// }
+
 //nolint:gocognit
 func (b *Bmsteams) poll(channelName string) error {
 	msgmap := make(map[string]teamsMessageInfo)
@@ -337,8 +399,8 @@ func (b *Bmsteams) poll(channelName string) error {
 						msgInfo.replies[*reply.ID] = *msgTime(&reply)
 						if !b.skipOwnMessage(&reply) {
 							if reply.DeletedDateTime == nil {
-
-								// time updated for changed reply-ID
+								//processingConfigMessage(channelName, &reply, b, WithText(replyText))
+								//time updated for changed reply-ID
 								replyText := b.convertToMD(*reply.Body.Content)
 								changedReplyObject := config.Message{
 									Username: *reply.From.User.DisplayName,
