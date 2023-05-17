@@ -49,10 +49,11 @@ type Bmsteams struct {
 	ctx   context.Context
 	botID string
 	*bridge.Config
+	idsForDelMap map[string]string
 }
 
 func New(cfg *bridge.Config) bridge.Bridger {
-	return &Bmsteams{Config: cfg}
+	return &Bmsteams{Config: cfg, idsForDelMap: make(map[string]string)}
 }
 
 type teamsMessageInfo struct {
@@ -130,11 +131,70 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 		msg.Text = fmt.Sprintf("[thread]: %s", msg.Text)
 	}
 
+	// if  Event:"msg_delete" ja dann lösche die Messages
+	// teams id in einer map merken
+
 	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().Request()
-	text := msg.Username + msg.Text
-	quotedText := "<p>" + html.EscapeString(text) + "</p>"
-	replacementQuotedText := strings.Replace(quotedText, "\n", "<br>", -1)
+	b.Log.Debugf("=> Original Text: '%#v'", msg.Text)
+
+	// convert to HTML
+	htmlText := "<p>" + html.EscapeString(msg.Username+msg.Text) + "</p>"
+	htmlText = strings.Replace(htmlText, "\n", "<br>", -1)
+
+	// process mentions
+	var chatMessageMentionsArr []msgraph.ChatMessageMention //array für mention-objekte
+	//xxx := msgraph.ChatMessageMention{Mentioned: msgraph.IdentitySet{User: msgraph.Identity{ID: "...", DisplayName: "...."}}}
+	mentionPattern := regexp.MustCompile(`(?:^|\s)@([^@\s]+)`)
+	mentionCounter := 0
+	htmlText = mentionPattern.ReplaceAllStringFunc(htmlText, func(matchingMention string) string {
+		mentionCounter++
+		//TODO: entscheiden ob channel/all oder user-mention erzeugt werden muss
+		//msgraph.chatMessageMention{Mentioned: msgraph.IdentitySet{Conversation: "channel"}}
+		mentionCounterPointer := mentionCounter
+		channelIDTeams := msg.Channel
+		chanelName := "PublicTest5"
+		if matchingMention == "channel" || matchingMention == "all" {
+			//channelIdentityType := msgraph.ChatMessageMention{Mentioned: &msgraph.IdentitySet{Conversation: &msgraph.ConversationIdentity{IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel}}}
+			mentionContent := msgraph.ChatMessageMention{
+				ID:          &mentionCounterPointer,
+				MentionText: &matchingMention,
+				Mentioned: &msgraph.IdentitySet{
+					Conversation: &msgraph.ConversationIdentity{
+						IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel,
+						Identity: &msgraph.Identity{
+							ID:          &channelIDTeams,
+							DisplayName: &chanelName,
+						},
+					},
+				},
+			}
+			chatMessageMentionsArr = append(chatMessageMentionsArr, mentionContent)
+		} else {
+			mentionContentAll := msgraph.ChatMessageMention{
+				ID:          &mentionCounterPointer,
+				MentionText: &matchingMention,
+				Mentioned: &msgraph.IdentitySet{
+					Conversation: &msgraph.ConversationIdentity{
+						IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel,
+						Identity: &msgraph.Identity{
+							ID:          &channelIDTeams,
+							DisplayName: &chanelName,
+						},
+					},
+				},
+			}
+			chatMessageMentionsArr = append(chatMessageMentionsArr, mentionContentAll)
+
+		}
+
+		//TODO: mention-objekt erzeugen und zu chatMessageMentions hinzufügen
+		return fmt.Sprintf("<at id=\"%v\">%s</at>", mentionCounter, matchingMention)
+	})
+	b.Log.Debugf("=> Text with mentions: '%#v'", htmlText)
+
+	// process attached images
 	var hostedContentsMessagesArr []msgraph.ChatMessageHostedContent
+	msgChatMessageID := msg.ID
 	if msg.Extra["file"] != nil {
 		for i, file := range msg.Extra["file"] {
 			fileInfo := file.(config.FileInfo)
@@ -142,58 +202,91 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 			extIndex := strings.LastIndex(fileInfo.Name, ".")
 			ext := fileInfo.Name[extIndex:]
 			contentType := mime.TypeByExtension(ext)
-			if contentType != "image/jpg" && contentType != "image/jpeg" && contentType != "image/png" {
-				contentText := fmt.Sprintf("Datei %s wurde entfernt.", fileInfo.Name)
-				content := &msgraph.ItemBody{Content: &contentText}
-				rmsg := &msgraph.ChatMessage{
-					HostedContents: hostedContentsMessagesArr,
-					Body:           content,
+			if contentType == "image/jpg" || contentType == "image/jpeg" || contentType == "image/png" {
+				b.Log.Debugf("=> Receiving  the content Type: %#v", contentType)
+				contentBytes := fileInfo.Data
+				encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
+				temporaryIdCounterInt := i
+				b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
+				temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
+				tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">" // break
+				htmlText += tag
+				b.Log.Debugf("=> Output of the text for body content%#v", htmlText)
+				// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
+				hostedContent := msgraph.ChatMessageHostedContent{
+					ContentType:               &contentType,
+					ContentBytes:              &encodedContentBytes,
+					MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
 				}
 
-				ct.Add(b.ctx, rmsg)
-			}
-			b.Log.Debugf("=> Receiving  the content Type: %#v", contentType)
-			contentBytes := fileInfo.Data
-			encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
-			temporaryIdCounterInt := i
-			b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
-			temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
-			tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">" // break
-			replacementQuotedText += tag
-			b.Log.Debugf("=> Output of the text for body content%#v", replacementQuotedText)
-			// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
-			message := msgraph.ChatMessageHostedContent{
-				ContentType:               &contentType,
-				ContentBytes:              &encodedContentBytes,
-				MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
+				// Hinzufügen der Nachricht zum Array
+				hostedContentsMessagesArr = append(hostedContentsMessagesArr, hostedContent)
+			} else {
+				contentText := fmt.Sprintf("<br>Datei %s wurde entfernt.", fileInfo.Name)
+				htmlText += contentText
 			}
 
-			// Hinzufügen der Nachricht zum Array
-			hostedContentsMessagesArr = append(hostedContentsMessagesArr, message)
 		}
 
-		content := &msgraph.ItemBody{Content: &replacementQuotedText, ContentType: msgraph.BodyTypePHTML}
+		content := &msgraph.ItemBody{Content: &htmlText, ContentType: msgraph.BodyTypePHTML}
 		rmsg := &msgraph.ChatMessage{
 			HostedContents: hostedContentsMessagesArr,
 			Body:           content,
+			Mentions:       chatMessageMentionsArr,
 		}
+		b.Log.Debugf("=> Output of the final graph message %#v", rmsg)
+		res, err := ct.Add(b.ctx, rmsg)
+		if err != nil {
+			return "", err
+		}
+		b.idsForDelMap[msgChatMessageID] = *res.ID
+		return *res.ID, nil
 
-		res, err := ct.Add(b.ctx, rmsg)
-		if err != nil {
-			return "", err
-		}
-		return *res.ID, nil
 	} else {
-		content := &msgraph.ItemBody{Content: &replacementQuotedText, ContentType: msgraph.BodyTypePHTML}
+		content := &msgraph.ItemBody{Content: &htmlText, ContentType: msgraph.BodyTypePHTML}
 		rmsg := &msgraph.ChatMessage{
-			Body: content,
+			Body:     content,
+			Mentions: chatMessageMentionsArr,
 		}
 		res, err := ct.Add(b.ctx, rmsg)
 		if err != nil {
 			return "", err
 		}
+		b.idsForDelMap[msgChatMessageID] = *res.ID
 		return *res.ID, nil
+
+		// if msgEventDel != config.EventMsgDelete {
+		// 	content := &msgraph.ItemBody{Content: &replacementQuotedText, ContentType: msgraph.BodyTypePHTML}
+		// 	rmsg := &msgraph.ChatMessage{
+		// 		Body: content,
+		// 	}
+		// 	res, err := ct.Add(b.ctx, rmsg)
+		// 	if err != nil {
+		// 		return "", err
+		// 	}
+		// 	b.idsForDelMap[msgChatMessageID] = *res.ID
+		// 	return *res.ID, nil
+
+		// } else {
+		// 	if idToDelete, ok := b.idsForDelMap[msgChatMessageID]; ok {
+		// 		//err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(idToDelete).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
+		// 		// in den json rein stepen und schauen ob die url gleich ist wie  die aus den mm von frank (arrayQ)
+		// 		// phil fragen nach der slack konf datei. Die ist so änlich wie die toml
+		// 		err := b.gc.Users().ID("ME").Request().JSONRequest(b.ctx, "DELETE", "/conversations/"+msg.Channel+"/messages/"+idToDelete, nil, nil)
+		// 		if err != nil {
+
+		// 			return "", err
+		// 		}
+
+		// 	} else {
+		// 		b.Log.Debugf("Message ID to delete ist not found %v ", msgChatMessageID)
+
+		// 	}
+		// 	return "", nil
+		// }
+
 	}
+
 }
 
 func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
@@ -205,7 +298,61 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 	}
 
 	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().Request()
-	text := msg.Username + msg.Text
+
+	b.Log.Debug("=> Original reply Text: '%s'", msg.Text)
+
+	// convert to HTML
+	htmlReplyText := "<p>" + html.EscapeString(msg.Username+msg.Text) + "</p>"
+	htmlReplyText = strings.Replace(htmlReplyText, "\n", "<br>", -1)
+
+	// text := msg.Username + msg.Text
+	// quotedText := "<p>" + html.EscapeString(text) + "</p>"
+	// replyReplacementQuotedText := strings.Replace(quotedText, "\n", "<br>", -1)
+
+	var chatReplyMessageMentionArr []msgraph.ChatMessageMention
+	replyMentionPattern := regexp.MustCompile(`(?:^|\s)@([^@\s]+)`)
+	mentionReplyCounter := 0
+
+	htmlReplyText = replyMentionPattern.ReplaceAllStringFunc(htmlReplyText, func(matchingReplyMention string) string {
+		mentionReplyCounter++
+		mentionReplyCounterPointer := mentionReplyCounter
+		channelIDTeams := msg.Channel
+		channelDisplayName := "PublicTest5"
+		if matchingReplyMention == "channel" || matchingReplyMention == "all" {
+			replyMentionContent := msgraph.ChatMessageMention{
+				ID:          &mentionReplyCounterPointer,
+				MentionText: &matchingReplyMention,
+				Mentioned: &msgraph.IdentitySet{
+					Conversation: &msgraph.ConversationIdentity{
+						IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel,
+						Identity: &msgraph.Identity{
+							ID:          &channelIDTeams,
+							DisplayName: &channelDisplayName,
+						},
+					},
+				},
+			}
+			chatReplyMessageMentionArr = append(chatReplyMessageMentionArr, replyMentionContent)
+		} else {
+			replyMentionContent := msgraph.ChatMessageMention{
+				ID:          &mentionReplyCounterPointer,
+				MentionText: &matchingReplyMention,
+				Mentioned: &msgraph.IdentitySet{
+					Conversation: &msgraph.ConversationIdentity{
+						IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel,
+						Identity: &msgraph.Identity{
+							ID:          &channelIDTeams,
+							DisplayName: &channelDisplayName,
+						},
+					},
+				},
+			}
+			chatReplyMessageMentionArr = append(chatReplyMessageMentionArr, replyMentionContent)
+		}
+		return fmt.Sprintf(" <at id=\"%v\">%s</at>", mentionReplyCounter, matchingReplyMention)
+
+	})
+	b.Log.Debugf("=> Text with mentions: '%#v'", htmlReplyText)
 
 	var hostedContentsMessagesArr []msgraph.ChatMessageHostedContent
 
@@ -222,8 +369,8 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 		b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
 		temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
 		tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">"
-		text += tag
-		b.Log.Debugf("=> Output of the text for body content%#v", text)
+		htmlReplyText += tag
+		b.Log.Debugf("=> Output of the text for body content%#v", htmlReplyText)
 		// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
 		message := msgraph.ChatMessageHostedContent{
 			ContentType:               &contentType,
@@ -235,10 +382,11 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 		hostedContentsMessagesArr = append(hostedContentsMessagesArr, message)
 	}
 
-	content := &msgraph.ItemBody{Content: &text, ContentType: msgraph.BodyTypePHTML}
+	content := &msgraph.ItemBody{Content: &htmlReplyText, ContentType: msgraph.BodyTypePHTML}
 	rmsg := &msgraph.ChatMessage{
 		HostedContents: hostedContentsMessagesArr,
 		Body:           content,
+		Mentions:       chatReplyMessageMentionArr,
 	}
 
 	res, err := ct.Add(b.ctx, rmsg)
@@ -381,16 +529,16 @@ func (b *Bmsteams) poll(channelName string) error {
 		for i := len(res) - 1; i >= 0; i-- {
 			msg := res[i]
 			//msg.Reactions
-			b.Log.Debugf("\n\n<= toplevel is ID %s", *msg.ID)
+			//b.Log.Debugf("\n\n<= toplevel is ID %s", *msg.ID)
 			if msgInfo, ok := msgmap[*msg.ID]; ok {
 				for _, reply := range msg.Replies {
 					//reply.Reactions
 					if msgTimeReply, ok := msgInfo.replies[*reply.ID]; ok {
 						// timeStamps vergleichen, hat die replies lasmodifdate
 						// creattime skip
-						b.Log.Debugf("<= checking reply %s", *reply.ID)
+						//b.Log.Debugf("<= checking reply %s", *reply.ID)
 						if msgTimeReply == *msgTime(&reply) {
-							b.Log.Debugf("<= unchanged reply %s", *reply.ID)
+							//b.Log.Debugf("<= unchanged reply %s", *reply.ID)
 							continue
 
 						}
