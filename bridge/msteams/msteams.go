@@ -549,7 +549,7 @@ func (b *Bmsteams) poll(channelName string) error {
 							if reply.DeletedDateTime == nil {
 								//processingConfigMessage(channelName, &reply, b, WithText(replyText))
 								//time updated for changed reply-ID
-								replyText := b.convertToMD(*reply.Body.Content)
+								replyText := b.converMentionsAndRemoveHTML(&msg)
 								changedReplyObject := config.Message{
 									Username: *reply.From.User.DisplayName,
 									Text:     replyText,
@@ -586,7 +586,7 @@ func (b *Bmsteams) poll(channelName string) error {
 						msgInfo.replies[*reply.ID] = *msgTime(&reply)
 
 						if !b.skipOwnMessage(&reply) {
-							replyText := b.convertToMD(*reply.Body.Content)
+							replyText := b.converMentionsAndRemoveHTML(&msg)
 							newReplyObject := config.Message{
 								Username: *reply.From.User.DisplayName,
 								Text:     replyText,
@@ -637,7 +637,8 @@ func (b *Bmsteams) poll(channelName string) error {
 			if msg.DeletedDateTime == nil {
 				// we did not 'continue' above so this message really needs to be sent
 				b.Log.Debugf("<= Sending message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
-				text := b.convertToMD(*msg.Body.Content)
+				// extra funktion
+				text := b.converMentionsAndRemoveHTML(&msg)
 				rmsg := config.Message{
 					Username: *msg.From.User.DisplayName,
 					Text:     text,
@@ -653,7 +654,6 @@ func (b *Bmsteams) poll(channelName string) error {
 				b.Remote <- rmsg
 			} else {
 				b.Log.Debugf("<= Sending toplevel message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
-				//text := b.convertToMD(*msg.Body.Content)
 				deletedTopLevelMsg := config.Message{
 					Username: *msg.From.User.DisplayName,
 					Text:     "DeleteMe!",
@@ -684,6 +684,42 @@ func (b *Bmsteams) setBotID() error {
 	}
 	b.botID = *r.ID
 	return nil
+}
+
+func (b *Bmsteams) converMentionsAndRemoveHTML(msg *msgraph.ChatMessage) string {
+	// convert mentions in msg.Body.Content
+
+	text := *msg.Body.Content
+	mmMentionPattern := regexp.MustCompile(`<at.+?/at>`)
+	text = mmMentionPattern.ReplaceAllStringFunc(text, func(matchingMattermostMention string) string {
+		//spliten string
+		splitString := strings.SplitN(matchingMattermostMention, "\"", 3)
+		getIDStr := splitString[1]
+		getIDInt, err := strconv.Atoi(getIDStr)
+		if err != nil {
+			fmt.Println("Error: ", err)
+			return ""
+		}
+		//schleife über alle mentions
+
+		for _, mention := range msg.Mentions {
+			if *mention.ID == getIDInt {
+				if mention.Mentioned.Conversation != nil {
+					return "@" + "channel"
+				}
+			} else {
+				b.Log.Debugf("=> Mention additionalData is empty ")
+			}
+
+		}
+
+		return fmt.Sprintf("<at id=\"%v\">%s</at>", getIDStr, matchingMattermostMention)
+
+	})
+
+	withoutHTML := b.convertToMD(text)
+
+	return withoutHTML
 }
 
 func (b *Bmsteams) convertToMD(text string) string {
