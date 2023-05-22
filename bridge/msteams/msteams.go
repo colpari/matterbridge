@@ -35,7 +35,7 @@ für den Microsoft Graph-API-Zugriff und ein regulärer Ausdruck, der verwendet 
 um Anhänge aus einer Zeichenfolge zu entfernen, indem er nach einem bestimmten Muster sucht.
 */
 var (
-	defaultScopes = []string{"openid", "profile", "offline_access", "Group.Read.All", "Group.ReadWrite.All"}
+	defaultScopes = []string{"openid", "profile", "offline_access", "Group.Read.All", "Group.ReadWrite.All", "ChannelMessage.ReadWrite"}
 	attachRE      = regexp.MustCompile(`<attachment id=.*?attachment>`)
 )
 
@@ -119,7 +119,29 @@ func (b *Bmsteams) JoinChannel(channel config.ChannelInfo) error {
 	return nil
 }
 
+func (b *Bmsteams) DeleteToTeams(msg config.Message) (string, error) {
+	msgChatMessageID := msg.ID
+	if idToDelete, ok := b.idsForDelMap[msgChatMessageID]; ok {
+		err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(idToDelete).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
+		// in den json rein stepen und schauen ob die url gleich ist wie  die aus den mm von frank (arrayQ)
+		// phil fragen nach der slack konf datei. Die ist so änlich wie die toml
+		//err := b.gc.Users().ID("ME").Request().JSONRequest(b.ctx, "DELETE", "/conversations/"+msg.Channel+"/messages/"+idToDelete, nil, nil)
+		if err != nil {
+			return "", err
+		}
+
+	} else {
+		b.Log.Debugf("Message ID to delete ist not found %v ", msgChatMessageID)
+
+	}
+	return "", nil
+}
+
 func (b *Bmsteams) Send(msg config.Message) (string, error) {
+	if msg.Event == config.EventMsgDelete {
+		return b.DeleteToTeams(msg)
+	}
+
 	b.Log.Debugf("=> Receiving %#v", msg)
 	if msg.ParentValid() {
 		return b.sendReply(msg)
