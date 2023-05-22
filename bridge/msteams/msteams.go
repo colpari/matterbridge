@@ -549,7 +549,7 @@ func (b *Bmsteams) poll(channelName string) error {
 							if reply.DeletedDateTime == nil {
 								//processingConfigMessage(channelName, &reply, b, WithText(replyText))
 								//time updated for changed reply-ID
-								replyText := b.converMentionsAndRemoveHTML(&msg)
+								replyText := b.converMentionsAndRemoveHTML(&reply)
 								changedReplyObject := config.Message{
 									Username: *reply.From.User.DisplayName,
 									Text:     replyText,
@@ -586,7 +586,7 @@ func (b *Bmsteams) poll(channelName string) error {
 						msgInfo.replies[*reply.ID] = *msgTime(&reply)
 
 						if !b.skipOwnMessage(&reply) {
-							replyText := b.converMentionsAndRemoveHTML(&msg)
+							replyText := b.converMentionsAndRemoveHTML(&reply)
 							newReplyObject := config.Message{
 								Username: *reply.From.User.DisplayName,
 								Text:     replyText,
