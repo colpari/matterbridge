@@ -120,20 +120,23 @@ func (b *Bmsteams) JoinChannel(channel config.ChannelInfo) error {
 }
 
 func (b *Bmsteams) DeleteToTeams(msg config.Message) (string, error) {
-	msgChatMessageID := msg.ID
-	if idToDelete, ok := b.idsForDelMap[msgChatMessageID]; ok {
-		err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(idToDelete).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
-		// in den json rein stepen und schauen ob die url gleich ist wie  die aus den mm von frank (arrayQ)
-		// phil fragen nach der slack konf datei. Die ist so änlich wie die toml
-		//err := b.gc.Users().ID("ME").Request().JSONRequest(b.ctx, "DELETE", "/conversations/"+msg.Channel+"/messages/"+idToDelete, nil, nil)
+
+	// wenn msg eine parentID hat: msg.Id und ParentId mittels der map mappen -> zweite Version des Request ausführen
+	// an sonsten: nur msg.ID mappen und erste Version ausführen
+	if msg.ParentID == "" {
+		err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ID).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
 		if err != nil {
 			return "", err
 		}
-
 	} else {
-		b.Log.Debugf("Message ID to delete ist not found %v ", msgChatMessageID)
-
+		err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().ID(msg.ID).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
+		if err != nil {
+			return "", err
+		}
 	}
+	// in den json rein stepen und schauen ob die url gleich ist wie  die aus den mm von frank (arrayQ)
+	// phil fragen nach der slack konf datei. Die ist so änlich wie die toml
+	//err := b.gc.Users().ID("ME").Request().JSONRequest(b.ctx, "DELETE", "/conversations/"+msg.Channel+"/messages/"+idToDelete, nil, nil)
 	return "", nil
 }
 
@@ -292,8 +295,6 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 		// } else {
 		// 	if idToDelete, ok := b.idsForDelMap[msgChatMessageID]; ok {
 		// 		//err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(idToDelete).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
-		// 		// in den json rein stepen und schauen ob die url gleich ist wie  die aus den mm von frank (arrayQ)
-		// 		// phil fragen nach der slack konf datei. Die ist so änlich wie die toml
 		// 		err := b.gc.Users().ID("ME").Request().JSONRequest(b.ctx, "DELETE", "/conversations/"+msg.Channel+"/messages/"+idToDelete, nil, nil)
 		// 		if err != nil {
 
@@ -410,8 +411,9 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 		Body:           content,
 		Mentions:       chatReplyMessageMentionArr,
 	}
-
+	// reply id in die mapp schmeißen
 	res, err := ct.Add(b.ctx, rmsg)
+	b.idsForDelMap[msg.ID] = *res.ID
 	if err != nil {
 		return "", err
 	}
