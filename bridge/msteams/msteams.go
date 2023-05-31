@@ -160,7 +160,8 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 	b.Log.Debugf("=> Original Text: '%#v'", msg.Text)
 
 	// convert to HTML
-	htmlText := "<p>" + html.EscapeString(msg.Username) + "</p>\n\n" + msg.Text
+	formatUsername := "<strong>" + msg.Username + "</strong>"
+	htmlText := "<p>" + html.EscapeString(formatUsername) + "</p>\n\n" + msg.Text
 	//htmlText = strings.Replace(htmlText, "\n", "<br>", -1)
 
 	// process mentions
@@ -168,6 +169,7 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 	//xxx := msgraph.ChatMessageMention{Mentioned: msgraph.IdentitySet{User: msgraph.Identity{ID: "...", DisplayName: "...."}}}
 	mentionPattern := regexp.MustCompile(`(?:^|\s)@([^@\s]+)`)
 	mentionCounter := 0
+
 	htmlText = mentionPattern.ReplaceAllStringFunc(htmlText, func(matchingMention string) string {
 		mentionCounter++
 		//TODO: entscheiden ob channel/all oder user-mention erzeugt werden muss
@@ -208,19 +210,17 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 			chatMessageMentionsArr = append(chatMessageMentionsArr, mentionContentAll)
 
 		}
-
-		//TODO: mention-objekt erzeugen und zu chatMessageMentions hinzufügen
 		return fmt.Sprintf("<at id=\"%v\">%s</at>", mentionCounter, matchingMention)
 	})
 	b.Log.Debugf("=> Text with mentions: '%#v'", htmlText)
 
-	// mdReadyHTMLText := blackfriday.Run(htmlText, blackfriday.WithNoExtensions())
-	// mdReadyHTMLString := string(mdReadyHTMLText)
 	mdToHtml := makeHTML(htmlText)
 	fmt.Println("=> Receiving the HTM String: ", mdToHtml)
+
 	// process attached images
 	var hostedContentsMessagesArr []msgraph.ChatMessageHostedContent
 	msgChatMessageID := msg.ID
+
 	if msg.Extra["file"] != nil {
 		for i, file := range msg.Extra["file"] {
 			fileInfo := file.(config.FileInfo)
@@ -280,35 +280,6 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 		}
 		b.idsForDelMap[msgChatMessageID] = *res.ID
 		return *res.ID, nil
-
-		// if msgEventDel != config.EventMsgDelete {
-		// 	content := &msgraph.ItemBody{Content: &replacementQuotedText, ContentType: msgraph.BodyTypePHTML}
-		// 	rmsg := &msgraph.ChatMessage{
-		// 		Body: content,
-		// 	}
-		// 	res, err := ct.Add(b.ctx, rmsg)
-		// 	if err != nil {
-		// 		return "", err
-		// 	}
-		// 	b.idsForDelMap[msgChatMessageID] = *res.ID
-		// 	return *res.ID, nil
-
-		// } else {
-		// 	if idToDelete, ok := b.idsForDelMap[msgChatMessageID]; ok {
-		// 		//err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(idToDelete).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
-		// 		err := b.gc.Users().ID("ME").Request().JSONRequest(b.ctx, "DELETE", "/conversations/"+msg.Channel+"/messages/"+idToDelete, nil, nil)
-		// 		if err != nil {
-
-		// 			return "", err
-		// 		}
-
-		// 	} else {
-		// 		b.Log.Debugf("Message ID to delete ist not found %v ", msgChatMessageID)
-
-		// 	}
-		// 	return "", nil
-		// }
-
 	}
 
 }
@@ -326,12 +297,8 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 	b.Log.Debug("=> Original reply Text: '%s'", msg.Text)
 
 	// convert to HTML
-	htmlReplyText := "<p>" + html.EscapeString(msg.Username+msg.Text) + "</p>"
-	htmlReplyText = strings.Replace(htmlReplyText, "\n", "<br>", -1)
-
-	// text := msg.Username + msg.Text
-	// quotedText := "<p>" + html.EscapeString(text) + "</p>"
-	// replyReplacementQuotedText := strings.Replace(quotedText, "\n", "<br>", -1)
+	formatUsername := "<strong>" + msg.Username + "</strong>"
+	htmlReplyText := "<p>" + html.EscapeString(formatUsername) + "</p>\n\n" + msg.Text
 
 	var chatReplyMessageMentionArr []msgraph.ChatMessageMention
 	replyMentionPattern := regexp.MustCompile(`(?:^|\s)@([^@\s]+)`)
@@ -378,47 +345,69 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 	})
 	b.Log.Debugf("=> Text with mentions: '%#v'", htmlReplyText)
 
+	mdToHtml := makeHTML(htmlReplyText)
+	fmt.Println("=> Receiving the HTM String: ", mdToHtml)
+
 	var hostedContentsMessagesArr []msgraph.ChatMessageHostedContent
 
-	for i, file := range msg.Extra["file"] {
-		fileInfo := file.(config.FileInfo)
-		b.Log.Debugf("=> Receiving the fileInfo: %#v", fileInfo)
-		extIndex := strings.LastIndex(fileInfo.Name, ".")
-		ext := fileInfo.Name[extIndex:]
-		contentType := mime.TypeByExtension(ext)
-		b.Log.Debugf("=> Receiving  the content Type: %#v", contentType)
-		contentBytes := fileInfo.Data
-		encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
-		temporaryIdCounterInt := i
-		b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
-		temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
-		tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">"
-		htmlReplyText += tag
-		b.Log.Debugf("=> Output of the text for body content%#v", htmlReplyText)
-		// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
-		message := msgraph.ChatMessageHostedContent{
-			ContentType:               &contentType,
-			ContentBytes:              &encodedContentBytes,
-			MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
+	if msg.Extra["file"] != nil {
+		for i, file := range msg.Extra["file"] {
+			fileInfo := file.(config.FileInfo)
+			b.Log.Debugf("=> Receiving the fileInfo: %#v", fileInfo)
+			extIndex := strings.LastIndex(fileInfo.Name, ".")
+			ext := fileInfo.Name[extIndex:]
+			contentType := mime.TypeByExtension(ext)
+			if contentType == "image/jpg" || contentType == "image/jpeg" || contentType == "image/png" {
+				b.Log.Debugf("=> Receiving  the content Type: %#v", contentType)
+				contentBytes := fileInfo.Data
+				encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
+				temporaryIdCounterInt := i
+				b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
+				temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
+				tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">"
+				mdToHtml += tag
+				b.Log.Debugf("=> Output of the text for body content%#v", mdToHtml)
+				// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
+				message := msgraph.ChatMessageHostedContent{
+					ContentType:               &contentType,
+					ContentBytes:              &encodedContentBytes,
+					MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
+				}
+
+				// Hinzufügen der Nachricht zum Array
+				hostedContentsMessagesArr = append(hostedContentsMessagesArr, message)
+			} else {
+				contentText := fmt.Sprintf("<br>Datei %s wurde entfernt.", fileInfo.Name)
+				mdToHtml += contentText
+			}
 		}
-
-		// Hinzufügen der Nachricht zum Array
-		hostedContentsMessagesArr = append(hostedContentsMessagesArr, message)
+		content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
+		rmsg := &msgraph.ChatMessage{
+			HostedContents: hostedContentsMessagesArr,
+			Body:           content,
+			Mentions:       chatReplyMessageMentionArr,
+		}
+		// reply id in die mapp schmeißen
+		res, err := ct.Add(b.ctx, rmsg)
+		b.idsForDelMap[msg.ID] = *res.ID
+		if err != nil {
+			return "", err
+		}
+		return *res.ID, nil
+	} else {
+		content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
+		rmsg := &msgraph.ChatMessage{
+			Body:     content,
+			Mentions: chatReplyMessageMentionArr,
+		}
+		res, err := ct.Add(b.ctx, rmsg)
+		if err != nil {
+			return "", err
+		}
+		b.idsForDelMap[msg.ID] = *res.ID
+		return *res.ID, nil
 	}
 
-	content := &msgraph.ItemBody{Content: &htmlReplyText, ContentType: msgraph.BodyTypePHTML}
-	rmsg := &msgraph.ChatMessage{
-		HostedContents: hostedContentsMessagesArr,
-		Body:           content,
-		Mentions:       chatReplyMessageMentionArr,
-	}
-	// reply id in die mapp schmeißen
-	res, err := ct.Add(b.ctx, rmsg)
-	b.idsForDelMap[msg.ID] = *res.ID
-	if err != nil {
-		return "", err
-	}
-	return *res.ID, nil
 }
 
 func (b *Bmsteams) getMessages(channel string) ([]msgraph.ChatMessage, error) {
