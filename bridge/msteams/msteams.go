@@ -134,9 +134,6 @@ func (b *Bmsteams) DeleteToTeams(msg config.Message) (string, error) {
 			return "", err
 		}
 	}
-	// in den json rein stepen und schauen ob die url gleich ist wie  die aus den mm von frank (arrayQ)
-	// phil fragen nach der slack konf datei. Die ist so änlich wie die toml
-	//err := b.gc.Users().ID("ME").Request().JSONRequest(b.ctx, "DELETE", "/conversations/"+msg.Channel+"/messages/"+idToDelete, nil, nil)
 	return "", nil
 }
 
@@ -163,8 +160,8 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 	b.Log.Debugf("=> Original Text: '%#v'", msg.Text)
 
 	// convert to HTML
-	htmlText := "<p>" + html.EscapeString(msg.Username+msg.Text) + "</p>"
-	htmlText = strings.Replace(htmlText, "\n", "<br>", -1)
+	htmlText := "<p>" + html.EscapeString(msg.Username) + "</p>\n\n" + msg.Text
+	//htmlText = strings.Replace(htmlText, "\n", "<br>", -1)
 
 	// process mentions
 	var chatMessageMentionsArr []msgraph.ChatMessageMention //array für mention-objekte
@@ -217,6 +214,10 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 	})
 	b.Log.Debugf("=> Text with mentions: '%#v'", htmlText)
 
+	// mdReadyHTMLText := blackfriday.Run(htmlText, blackfriday.WithNoExtensions())
+	// mdReadyHTMLString := string(mdReadyHTMLText)
+	mdToHtml := makeHTML(htmlText)
+	fmt.Println("=> Receiving the HTM String: ", mdToHtml)
 	// process attached images
 	var hostedContentsMessagesArr []msgraph.ChatMessageHostedContent
 	msgChatMessageID := msg.ID
@@ -235,8 +236,8 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 				b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
 				temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
 				tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">" // break
-				htmlText += tag
-				b.Log.Debugf("=> Output of the text for body content%#v", htmlText)
+				mdToHtml += tag
+				b.Log.Debugf("=> Output of the text for body content%#v", mdToHtml)
 				// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
 				hostedContent := msgraph.ChatMessageHostedContent{
 					ContentType:               &contentType,
@@ -248,12 +249,12 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 				hostedContentsMessagesArr = append(hostedContentsMessagesArr, hostedContent)
 			} else {
 				contentText := fmt.Sprintf("<br>Datei %s wurde entfernt.", fileInfo.Name)
-				htmlText += contentText
+				mdToHtml += contentText
 			}
 
 		}
 
-		content := &msgraph.ItemBody{Content: &htmlText, ContentType: msgraph.BodyTypePHTML}
+		content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
 		rmsg := &msgraph.ChatMessage{
 			HostedContents: hostedContentsMessagesArr,
 			Body:           content,
@@ -268,7 +269,7 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 		return *res.ID, nil
 
 	} else {
-		content := &msgraph.ItemBody{Content: &htmlText, ContentType: msgraph.BodyTypePHTML}
+		content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
 		rmsg := &msgraph.ChatMessage{
 			Body:     content,
 			Mentions: chatMessageMentionsArr,
@@ -520,7 +521,7 @@ func (b *Bmsteams) skipOwnMessage(msg *msgraph.ChatMessage) bool {
 
 //nolint:gocognit
 func (b *Bmsteams) poll(channelName string) error {
-	msgmap := make(map[string]teamsMessageInfo)
+	msgmap := make(map[string]teamsMessageInfo) // Zeitstempel merken für DB
 	b.Log.Debug("getting initial messages")
 	res, err := b.getMessages(channelName)
 	if err != nil {
@@ -528,15 +529,11 @@ func (b *Bmsteams) poll(channelName string) error {
 	}
 
 	for _, msgToplevel := range res {
-		// if b.skipOwnMessage(&msgToplevel) {
-		// 	continue
-		// } else {
 		msgToplevelInfo := msgmap[*msgToplevel.ID]
-		msgToplevelInfo.mTime = *msgToplevel.CreatedDateTime
+		//msgToplevelInfo.mTime = *msgToplevel.CreatedDateTime  should be done by updateMsgToplevel below
 		updateMsgToplevel(&msgToplevel, &msgToplevelInfo)
 		updateMsgReplies(&msgToplevel, &msgToplevelInfo, b)
 		msgmap[*msgToplevel.ID] = msgToplevelInfo
-		// }
 	}
 
 	// Annahme: botID und msg sind bereits deklariert und initialisiert
@@ -552,7 +549,6 @@ func (b *Bmsteams) poll(channelName string) error {
 		// check top level messages from oldest to newest
 		for i := len(res) - 1; i >= 0; i-- {
 			msg := res[i]
-			//msg.Reactions
 			//b.Log.Debugf("\n\n<= toplevel is ID %s", *msg.ID)
 			if msgInfo, ok := msgmap[*msg.ID]; ok {
 				for _, reply := range msg.Replies {
@@ -571,7 +567,6 @@ func (b *Bmsteams) poll(channelName string) error {
 						msgInfo.replies[*reply.ID] = *msgTime(&reply)
 						if !b.skipOwnMessage(&reply) {
 							if reply.DeletedDateTime == nil {
-								//processingConfigMessage(channelName, &reply, b, WithText(replyText))
 								//time updated for changed reply-ID
 								replyText := b.converMentionsAndRemoveHTML(&reply)
 								changedReplyObject := config.Message{
