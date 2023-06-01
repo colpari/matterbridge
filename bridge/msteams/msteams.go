@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"html"
 	"mime"
 	"os"
 	"regexp"
@@ -137,6 +136,14 @@ func (b *Bmsteams) DeleteToTeams(msg config.Message) (string, error) {
 	return "", nil
 }
 
+// func für bearbeiten und für replies bearbeiten:
+//	1. erkennen ob config.Message eine neue ist oder ein Edit (-> wahrscheinlich daran ob ID gesetzt ist oder nicht)
+//  2. API calls herausfinden
+//		b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID)[ .Replies().ID(msg.ID) ].Request().Update(...)
+//		- herausfinden ob beim edit in dem ChatMessage-Objekt noch die ID stehen muss
+//  3. entweder code für Mentions und Bilder in einzelne Funktionen ausgliedern um sie auch im Edit-Fall zu verwenden
+//		oder: in Send und SendReply nur den jeweiligen API-Aufruf anhand der Situation auswählen und die restlichen code-Pfade beibehalten
+
 func (b *Bmsteams) Send(msg config.Message) (string, error) {
 	if msg.Event == config.EventMsgDelete {
 		return b.DeleteToTeams(msg)
@@ -156,12 +163,11 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 	// if  Event:"msg_delete" ja dann lösche die Messages
 	// teams id in einer map merken
 
-	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().Request()
 	b.Log.Debugf("=> Original Text: '%#v'", msg.Text)
 
 	// convert to HTML
-	formatUsername := "<strong>" + msg.Username + "</strong>"
-	htmlText := "<p>" + html.EscapeString(formatUsername) + "</p>\n\n" + msg.Text
+	formatUsername := "<strong>" + msg.Username + "</strong>\n"
+	htmlText := "<p>" + formatUsername + "</p>\n\n" + msg.Text
 	//htmlText = strings.Replace(htmlText, "\n", "<br>", -1)
 
 	// process mentions
@@ -253,27 +259,26 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 			}
 
 		}
+	}
 
-		content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
-		rmsg := &msgraph.ChatMessage{
-			HostedContents: hostedContentsMessagesArr,
-			Body:           content,
-			Mentions:       chatMessageMentionsArr,
-		}
-		b.Log.Debugf("=> Output of the final graph message %#v", rmsg)
-		res, err := ct.Add(b.ctx, rmsg)
+	content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
+	rmsg := &msgraph.ChatMessage{
+		Body:           content,
+		Mentions:       chatMessageMentionsArr,
+		HostedContents: hostedContentsMessagesArr,
+	}
+	// add new msg
+	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().Request()
+	// Edit msg
+	cte := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ID).Request()
+
+	if msg.ID != "" {
+		err := cte.Update(b.ctx, rmsg)
 		if err != nil {
 			return "", err
 		}
-		b.idsForDelMap[msgChatMessageID] = *res.ID
-		return *res.ID, nil
-
+		return msg.ID, err
 	} else {
-		content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
-		rmsg := &msgraph.ChatMessage{
-			Body:     content,
-			Mentions: chatMessageMentionsArr,
-		}
 		res, err := ct.Add(b.ctx, rmsg)
 		if err != nil {
 			return "", err
@@ -292,13 +297,11 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 		msg.Text = fmt.Sprintf("[thread]: %s", msg.Text)
 	}
 
-	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().Request()
-
 	b.Log.Debug("=> Original reply Text: '%s'", msg.Text)
 
 	// convert to HTML
-	formatUsername := "<strong>" + msg.Username + "</strong>"
-	htmlReplyText := "<p>" + html.EscapeString(formatUsername) + "</p>\n\n" + msg.Text
+	formatUsername := "<strong> " + msg.Username + "</strong>\n"
+	htmlReplyText := "<p>" + formatUsername + "</p>\n\n" + msg.Text
 
 	var chatReplyMessageMentionArr []msgraph.ChatMessageMention
 	replyMentionPattern := regexp.MustCompile(`(?:^|\s)@([^@\s]+)`)
@@ -381,25 +384,26 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 				mdToHtml += contentText
 			}
 		}
-		content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
-		rmsg := &msgraph.ChatMessage{
-			HostedContents: hostedContentsMessagesArr,
-			Body:           content,
-			Mentions:       chatReplyMessageMentionArr,
-		}
-		// reply id in die mapp schmeißen
-		res, err := ct.Add(b.ctx, rmsg)
-		b.idsForDelMap[msg.ID] = *res.ID
+	}
+
+	content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
+	rmsg := &msgraph.ChatMessage{
+		Body:           content,
+		Mentions:       chatReplyMessageMentionArr,
+		HostedContents: hostedContentsMessagesArr,
+	}
+
+	// add new reply msg
+	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().Request()
+	// Edit  reply msg
+	cte := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().ID(msg.ID).Request()
+	if msg.ID != "" {
+		err := cte.Update(b.ctx, rmsg)
 		if err != nil {
 			return "", err
 		}
-		return *res.ID, nil
+		return msg.ParentID, err
 	} else {
-		content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
-		rmsg := &msgraph.ChatMessage{
-			Body:     content,
-			Mentions: chatReplyMessageMentionArr,
-		}
 		res, err := ct.Add(b.ctx, rmsg)
 		if err != nil {
 			return "", err
