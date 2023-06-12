@@ -83,6 +83,11 @@ github.com/fsnotify/fsnotify
 # github.com/go-asn1-ber/asn1-ber v1.5.3
 ## explicit; go 1.13
 github.com/go-asn1-ber/asn1-ber
+# github.com/go-ldap/ldap v3.0.3+incompatible
+## explicit
+github.com/go-ldap/ldap
+# github.com/go-redis/redis v6.15.9+incompatible
+## explicit
 # github.com/golang-jwt/jwt v3.2.2+incompatible
 ## explicit
 github.com/golang-jwt/jwt
@@ -254,6 +259,13 @@ github.com/mattermost/logr/v2
 github.com/mattermost/logr/v2/config
 github.com/mattermost/logr/v2/formatters
 github.com/mattermost/logr/v2/targets
+# github.com/mattermost/mattermost-server v5.11.1+incompatible
+## explicit
+github.com/mattermost/mattermost-server/mlog
+github.com/mattermost/mattermost-server/model
+github.com/mattermost/mattermost-server/services/timezones
+github.com/mattermost/mattermost-server/utils/jsonutils
+github.com/mattermost/mattermost-server/utils/markdown
 # github.com/mattermost/mattermost-server/v5 v5.39.3
 ## explicit; go 1.15
 github.com/mattermost/mattermost-server/v5/model
@@ -333,6 +345,12 @@ github.com/mrexodia/wray
 # github.com/nelsonken/gomf v0.0.0-20190423072027-c65cc0469e94
 ## explicit; go 1.12
 github.com/nelsonken/gomf
+# github.com/nicksnyder/go-i18n v1.10.1
+## explicit
+github.com/nicksnyder/go-i18n/i18n
+github.com/nicksnyder/go-i18n/i18n/bundle
+github.com/nicksnyder/go-i18n/i18n/language
+github.com/nicksnyder/go-i18n/i18n/translation
 # github.com/olahol/melody v1.1.2
 ## explicit; go 1.19
 github.com/olahol/melody
@@ -695,6 +713,9 @@ google.golang.org/protobuf/reflect/protoregistry
 google.golang.org/protobuf/runtime/protoiface
 google.golang.org/protobuf/runtime/protoimpl
 google.golang.org/protobuf/types/descriptorpb
+# gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d
+## explicit
+gopkg.in/asn1-ber.v1
 # gopkg.in/ini.v1 v1.67.0
 ## explicit
 gopkg.in/ini.v1

@@ -97,6 +97,7 @@ func (b *Bslack) Command(cmd string) string {
 	return ""
 }
 
+// wie benutzman ide slak api aus go
 func (b *Bslack) Connect() error {
 	b.RLock()
 	defer b.RUnlock()
@@ -213,6 +214,7 @@ func (b *Bslack) Send(msg config.Message) (string, error) {
 
 // sendWebhook uses the configured WebhookURL to send the message
 func (b *Bslack) sendWebhook(msg config.Message) error {
+	//mdText := makeHTML(msg.Text)
 	// Skip events.
 	if msg.Event != "" {
 		return nil

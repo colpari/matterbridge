@@ -123,7 +123,7 @@ func (b *Bmattermost) Send(msg config.Message) (string, error) {
 	if b.Account == mattermostPlugin {
 		return "", nil
 	}
-	b.Log.Debugf("=> Receiving %#v", msg)
+	b.Log.Debugf("=> Receiving: %#v", msg)
 
 	// Make a action /me of the message
 	if msg.Event == config.EventUserAction {

@@ -114,6 +114,10 @@ type ChatMessageAttachment struct {
 type ChatMessageHostedContent struct {
 	// Entity is the base model of ChatMessageHostedContent
 	Entity
+	MicrosoftGraphTemporaryId *string  `json:"@microsoft.graph.temporaryId,omitempty"`
+	ContentBytes *string `json:"contentBytes,omitempty"`
+	ContentType *string `json:"contentType,omitempty"`
+
 }
 
 // ChatMessageMention undocumented

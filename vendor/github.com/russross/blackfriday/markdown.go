@@ -387,6 +387,7 @@ func MarkdownOptions(input []byte, renderer Renderer, opts Options) []byte {
 		p.notesRecord = make(map[string]struct{})
 	}
 
+	// here the parsing colpari
 	first := firstPass(p, input)
 	second := secondPass(p, first)
 	return second
@@ -473,6 +474,7 @@ func secondPass(p *parser, input []byte) []byte {
 					p.inline(&buf, ref.title)
 				}
 				p.r.FootnoteItem(&output, ref.link, buf.Bytes(), flags)
+				// is used to delete certain bits in a number.
 				flags &^= LIST_ITEM_BEGINNING_OF_LIST | LIST_ITEM_CONTAINS_BLOCK
 			}
 

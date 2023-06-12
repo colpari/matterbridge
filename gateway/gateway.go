@@ -258,6 +258,7 @@ func (gw *Gateway) getDestChannel(msg *config.Message, dest bridge.Bridge) []con
 	return channels
 }
 
+// wo wird .Messages verwendet ?
 func (gw *Gateway) getDestMsgID(msgID string, dest *bridge.Bridge, channel *config.ChannelInfo) string {
 	if res, ok := gw.Messages.Get(msgID); ok {
 		IDs := res.([]*BrMsgID)
@@ -278,6 +279,9 @@ func (gw *Gateway) ignoreTextEmpty(msg *config.Message) bool {
 		return false
 	}
 	if msg.Event == config.EventUserTyping {
+		return false
+	}
+	if msg.Event == config.EventMsgDelete {
 		return false
 	}
 	// we have an attachment or actual bytes, do not ignore
@@ -464,10 +468,14 @@ func (gw *Gateway) SendMessage(
 	msg.Avatar = gw.modifyAvatar(rmsg, dest)
 	msg.Username = gw.modifyUsername(rmsg, dest)
 
-	// exclude file delete event as the msg ID here is the native file ID that needs to be deleted
+	// fmt.Printf("Wir haben noch eine ID %s\n", msg.ID)
+
+	//exclude file delete event as the msg ID here is the native file ID that needs to be deleted
 	if msg.Event != config.EventFileDelete {
 		msg.ID = gw.getDestMsgID(rmsg.Protocol+" "+rmsg.ID, dest, channel)
 	}
+
+	//fmt.Printf("Wir haben keine ID mehr %s\n", msg.ID)
 
 	// for api we need originchannel as channel
 	if dest.Protocol == apiProtocol {
@@ -508,6 +516,7 @@ func (gw *Gateway) SendMessage(
 		gw.logger.Debugf("=> Send from %s (%s) to %s (%s) took %s", msg.Account, rmsg.Channel, dest.Account, channel.Name, time.Since(t))
 	}(time.Now())
 
+	// wichtig
 	mID, err := dest.Send(msg)
 	if err != nil {
 		return mID, err

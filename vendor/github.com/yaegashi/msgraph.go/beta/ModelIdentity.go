@@ -70,6 +70,13 @@ type IdentityRiskEvent struct {
 	ImpactedUser *User `json:"impactedUser,omitempty"`
 }
 
+// ConversationIdentity undocumented (added by colpari)
+type ConversationIdentity struct {
+	*Identity
+	// identityTypeConversation undocumented (added by colpari)
+	IdentityTypeConversation *ConversationIdentityType `json:"conversationIdentityType,omitempty"`
+}
+
 // IdentitySet undocumented
 type IdentitySet struct {
 	// Object is the base model of IdentitySet
@@ -80,6 +87,8 @@ type IdentitySet struct {
 	Device *Identity `json:"device,omitempty"`
 	// User undocumented
 	User *Identity `json:"user,omitempty"`
+	// Conversation undocumented (added by colpari)
+	Conversation *ConversationIdentity `json:"conversation,omitempty"`
 }
 
 // IdentityUserFlow undocumented

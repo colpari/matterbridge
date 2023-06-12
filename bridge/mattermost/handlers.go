@@ -149,6 +149,7 @@ func (b *Bmattermost) handleMatterClient(messages chan *config.Message) {
 			}
 		}
 
+		b.Log.Debugf("== messages wich sent through the bridge  %#v", rmsg)
 		messages <- rmsg
 	}
 }
