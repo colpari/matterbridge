@@ -43,7 +43,7 @@ require (
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d
 	github.com/shazow/ssh-chat v1.10.1
 	github.com/sirupsen/logrus v1.9.0
-	github.com/slack-go/slack v0.12.1
+	github.com/slack-go/slack v0.12.2
 	github.com/spf13/viper v1.15.0
 	github.com/stretchr/testify v1.8.1
 	github.com/vincent-petithory/dataurl v1.0.0
