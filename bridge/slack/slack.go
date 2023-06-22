@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +17,7 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/rs/xid"
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/socketmode"
 )
 
 type Bslack struct {
@@ -22,7 +25,9 @@ type Bslack struct {
 	*bridge.Config
 
 	mh  *matterhook.Client
+	ssm *socketmode.Client // socketmode einfügen
 	sc  *slack.Client
+	sc2 *slack.Client
 	rtm *slack.RTM
 	si  *slack.Info
 
@@ -109,12 +114,30 @@ func (b *Bslack) Connect() error {
 	// If we have a token we use the Slack websocket-based RTM for both sending and receiving.
 	if token := b.GetString(tokenConfig); token != "" {
 		b.Log.Info("Connecting using token")
+		//userToken := "xoxp-432307700594-5253922647267-5407161992449-008973cd240f3a17e16b91b47fd1224d"
+		appToken := "xapp-1-A05CG7GG9MM-5436073309477-093ad4e2aada45dffb77c63f717216e35e13ee2c5f9aec450adc46ea9025d3d6"
+		botToken := "xoxb-432307700594-5451620874497-ck84KfSb3KsCAUM6RLBbQrNR"
+		b.sc = slack.New(
+			token,
+			slack.OptionDebug(b.GetBool("Debug")),
+			slack.OptionAppLevelToken(appToken),
+		)
+		b.sc2 = slack.New(
+			botToken,
+			slack.OptionDebug(true),
+			slack.OptionLog(log.New(os.Stdout, "api: ", log.Lshortfile|log.LstdFlags)),
+			slack.OptionAppLevelToken(appToken),
+		)
 
-		b.sc = slack.New(token, slack.OptionDebug(b.GetBool("Debug")))
+		b.ssm = socketmode.New(
+			b.sc2,
+			socketmode.OptionDebug(true),
+			socketmode.OptionLog(log.New(os.Stdout, "socketmode: ", log.Lshortfile|log.LstdFlags)),
+		)
 
 		b.channels = newChannelManager(b.Log, b.sc)
 		b.users = newUserManager(b.Log, b.sc)
-
+		// in b struckt
 		b.rtm = b.sc.NewRTM()
 		go b.rtm.ManageConnection()
 		go b.handleSlack()
@@ -209,6 +232,7 @@ func (b *Bslack) Send(msg config.Message) (string, error) {
 	if b.GetString(outgoingWebhookConfig) != "" && b.GetString(tokenConfig) == "" {
 		return "", b.sendWebhook(msg)
 	}
+	// return muss auf die eventsAPI umgestellt werden
 	return b.sendRTM(msg)
 }
 
@@ -277,6 +301,7 @@ func (b *Bslack) sendWebhook(msg config.Message) error {
 	return nil
 }
 
+// diese funktion muss angepasst werden
 func (b *Bslack) sendRTM(msg config.Message) (string, error) {
 	// Handle channelmember messages.
 	if handled := b.handleGetChannelMembers(&msg); handled {
@@ -461,15 +486,15 @@ func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, erro
 		ts := time.Now()
 		b.Log.Debugf("Adding file %s to cache at %s with timestamp", fi.Name, ts.String())
 		b.cache.Add("filename"+fi.Name, ts)
-		initialComment := fmt.Sprintf("File from %s", msg.Username)
-		if fi.Comment != "" {
-			initialComment += fmt.Sprintf(" with comment: %s", fi.Comment)
-		}
+		// initialComment := fmt.Sprintf("File from %s", msg.Username)
+		// if fi.Comment != "" {
+		// 	initialComment += fmt.Sprintf(" with comment: %s", fi.Comment)
+		// }
 		res, err := b.sc.UploadFile(slack.FileUploadParameters{
 			Reader:          bytes.NewReader(*fi.Data),
 			Filename:        fi.Name,
 			Channels:        []string{channelID},
-			InitialComment:  initialComment,
+			InitialComment:  fi.Comment,
 			ThreadTimestamp: msg.ParentID,
 		})
 		if err != nil {
