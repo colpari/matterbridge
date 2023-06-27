@@ -27,9 +27,9 @@ type Bslack struct {
 	mh  *matterhook.Client
 	ssm *socketmode.Client // socketmode einfügen
 	sc  *slack.Client
-	sc2 *slack.Client
 	rtm *slack.RTM
 	si  *slack.Info
+	//sui	*slack.
 
 	cache        *lru.Cache
 	uuid         string
@@ -117,12 +117,12 @@ func (b *Bslack) Connect() error {
 		//userToken := "xoxp-432307700594-5253922647267-5407161992449-008973cd240f3a17e16b91b47fd1224d"
 		appToken := "xapp-1-A05CG7GG9MM-5436073309477-093ad4e2aada45dffb77c63f717216e35e13ee2c5f9aec450adc46ea9025d3d6"
 		botToken := "xoxb-432307700594-5451620874497-ck84KfSb3KsCAUM6RLBbQrNR"
+		// b.sc = slack.New(
+		// 	token,
+		// 	slack.OptionDebug(b.GetBool("Debug")),
+		// 	slack.OptionAppLevelToken(appToken),
+		// )
 		b.sc = slack.New(
-			token,
-			slack.OptionDebug(b.GetBool("Debug")),
-			slack.OptionAppLevelToken(appToken),
-		)
-		b.sc2 = slack.New(
 			botToken,
 			slack.OptionDebug(true),
 			slack.OptionLog(log.New(os.Stdout, "api: ", log.Lshortfile|log.LstdFlags)),
@@ -130,16 +130,18 @@ func (b *Bslack) Connect() error {
 		)
 
 		b.ssm = socketmode.New(
-			b.sc2,
+			b.sc,
 			socketmode.OptionDebug(true),
 			socketmode.OptionLog(log.New(os.Stdout, "socketmode: ", log.Lshortfile|log.LstdFlags)),
 		)
+		// GetUserIdentity, _ := b.sc2.users.profile.get
+		// fmt.Println("The object of the GetUserIdentity :: ", GetUserIdentity)
 
 		b.channels = newChannelManager(b.Log, b.sc)
 		b.users = newUserManager(b.Log, b.sc)
 		// in b struckt
-		b.rtm = b.sc.NewRTM()
-		go b.rtm.ManageConnection()
+		//b.rtm = b.sc.NewRTM()
+		//go b.rtm.ManageConnection()
 		go b.handleSlack()
 		return nil
 	}
@@ -180,15 +182,17 @@ func (b *Bslack) JoinChannel(channel config.ChannelInfo) error {
 	}
 
 	// try to join a channel when in legacy
-	if b.legacy {
-		_, _, _, err := b.sc.JoinConversation(channel.Name)
-		if err != nil {
-			switch err.Error() {
-			case "name_taken", "restricted_action":
-			case "default":
-				return err
-			}
-		}
+	if !b.legacy {
+		// _, _, _, err := b.sc.JoinConversation(channel.Name)
+		// if err != nil {
+		// 	switch err.Error() {
+		// 	case "name_taken", "restricted_action":
+		// 	case "default":
+		// 		return err
+		// 	}
+		// }
+		b.useChannelID = true
+		return nil
 	}
 
 	b.channels.populateChannels(false)
@@ -199,7 +203,7 @@ func (b *Bslack) JoinChannel(channel config.ChannelInfo) error {
 	}
 
 	if strings.HasPrefix(channel.Name, "ID:") {
-		b.useChannelID = true
+
 		channel.Name = channelInfo.Name
 	}
 

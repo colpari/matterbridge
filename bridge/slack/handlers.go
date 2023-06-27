@@ -116,9 +116,11 @@ func (b *Bslack) handleSlack() {
 // }
 
 func (b *Bslack) handleSlackClient(messages chan *config.Message) {
+	b.users.populateUsers(true)
 	go func() {
 		//live sachen
 		for evt := range b.ssm.Events {
+			fmt.Println("The Event object ::", evt)
 			switch evt.Type {
 			case socketmode.EventTypeConnecting:
 				fmt.Println("Connecting to Slack with Socket Mode...")
@@ -150,6 +152,11 @@ func (b *Bslack) handleSlackClient(messages chan *config.Message) {
 					case *slackevents.MemberJoinedChannelEvent:
 						fmt.Printf("user %q joined to channel %q", ev.User, ev.Channel)
 					case *slackevents.MessageEvent:
+
+						if b.skipMessageEvent2(ev) {
+							b.Log.Debugf("Skipped message: %#v", ev)
+							continue
+						}
 						// Handle new message event here
 						fmt.Printf("New message: %+v\n", ev)
 						rmsg, err := b.handleMessageEvent2(ev)
@@ -260,14 +267,12 @@ func (b *Bslack) handleMatterHook(messages chan *config.Message) {
 // 			return true
 // 		}
 // 	}
-
 // 	// Check for our callback ID
 // 	hasOurCallbackID := false
 // 	if len(ev.Blocks.BlockSet) == 1 {
 // 		block, ok := ev.Blocks.BlockSet[0].(*slack.SectionBlock)
 // 		hasOurCallbackID = ok && block.BlockID == "matterbridge_"+b.uuid
 // 	}
-
 // 	if ev.SubMessage != nil {
 // 		// It seems ev.SubMessage.Edited == nil when slack unfurls.
 // 		// Do not forward these messages. See Github issue #266.
@@ -285,18 +290,63 @@ func (b *Bslack) handleMatterHook(messages chan *config.Message) {
 // 			hasOurCallbackID = ok && block.BlockID == "matterbridge_"+b.uuid
 // 		}
 // 	}
-
 // 	// Skip any messages that we made ourselves or from 'slackbot' (see #527).
 // 	if ev.Username == sSlackBotUser ||
 // 		(b.rtm != nil && ev.Username == b.si.User.Name) || hasOurCallbackID {
 // 		return true
 // 	}
-
 // 	if len(ev.Files) > 0 {
 // 		return b.filesCached(ev.Files)
 // 	}
 // 	return false
 // }
+
+func (b *Bslack) skipMessageEvent2(ev *slackevents.MessageEvent) bool {
+	switch ev.SubType {
+	case sChannelLeave, sChannelJoin:
+		return b.GetBool(noSendJoinConfig)
+	case sPinnedItem, sUnpinnedItem:
+		return true
+	case sChannelTopic, sChannelPurpose:
+		// Skip the event if our bot/user account changed the topic/purpose
+		if ev.User == b.si.User.ID {
+			return true
+		}
+	}
+	// Check for our callback ID
+	//hasOurCallbackID := false
+	//TODO understendig what the hasOurCallbackID do
+	// if len(ev.Blocks.BlockSet) == 1 {
+	// 	block, ok := ev.Blocks.BlockSet[0].(*slack.SectionBlock)
+	// 	hasOurCallbackID = ok && block.BlockID == "matterbridge_"+b.uuid
+	// }
+	// if ev.Message != nil {
+	// 	// It seems ev.SubMessage.Edited == nil when slack unfurls.
+	// 	// Do not forward these messages. See Github issue #266.
+	// 	if ev.Message.ThreadTimeStamp != ev.Message.TimeStamp &&
+	// 		ev.Message.Edited == nil {
+	// 		return true
+	// 	}
+	// 	// see hidden subtypes at https://api.slack.com/events/message
+	// 	// these messages are sent when we add a message to a thread #709
+	// 	if ev.SubType == "message_replied" && ev.Hidden {
+	// 		return true
+	// 	}
+	// 	if len(ev.Message.Blocks.BlockSet) == 1 {
+	// 		block, ok := ev.Message.Blocks.BlockSet[0].(*slack.SectionBlock)
+	// 		hasOurCallbackID = ok && block.BlockID == "matterbridge_"+b.uuid
+	// 	}
+	// }
+	// Skip any messages that we made ourselves or from 'slackbot' (see #527).
+	// if ev.Username == sSlackBotUser ||
+	// 	(b.rtm != nil && ev.Username == b.si.User.Name) || hasOurCallbackID {
+	// 	return true
+	// }
+	// if len(ev.Files) > 0 {
+	// 	return b.filesCached2(ev.Files)
+	// }
+	return false
+}
 
 // func (b *Bslack) filesCached(files []slack.File) bool {
 // 	for i := range files {
@@ -306,6 +356,15 @@ func (b *Bslack) handleMatterHook(messages chan *config.Message) {
 // 	}
 // 	return true
 // }
+
+func (b *Bslack) filesCached2(files []slackevents.File) bool {
+	for i := range files {
+		if !b.fileCached2(&files[i]) {
+			return false
+		}
+	}
+	return true
+}
 
 // handleMessageEvent handles the message events. Together with any called sub-methods,
 // this method implements the following event processing pipeline:
@@ -432,7 +491,10 @@ func (b *Bslack) handleMessageEvent2(ev *slackevents.MessageEvent) (*config.Mess
 // }
 
 func (b *Bslack) handleStatusEvent2(ev *slackevents.MessageEvent, rmsg *config.Message) bool {
-	if ev.SubType != "bot_message" {
+	if ev.SubType == "bot_message" {
+		b.Log.Debug("skipping own message")
+		return true // skip own message
+	} else {
 		switch ev.SubType {
 		case sMessageChanged:
 			rmsg.Text = ev.Message.Text
@@ -554,37 +616,37 @@ func (b *Bslack) handleTypingEvent(ev *slack.UserTypingEvent) (*config.Message, 
 	}, nil
 }
 
-// handleDownloadFile handles file download
-func (b *Bslack) handleDownloadFile(rmsg *config.Message, file *slack.File, retry bool) error {
-	if b.fileCached(file) {
-		return nil
-	}
-	// Check that the file is neither too large nor blacklisted.
-	if err := helper.HandleDownloadSize(b.Log, rmsg, file.Name, int64(file.Size), b.General); err != nil {
-		b.Log.WithError(err).Infof("Skipping download of incoming file.")
-		return nil
-	}
+// // handleDownloadFile handles file download
+// func (b *Bslack) handleDownloadFile(rmsg *config.Message, file *slack.File, retry bool) error {
+// 	if b.fileCached(file) {
+// 		return nil
+// 	}
+// 	// Check that the file is neither too large nor blacklisted.
+// 	if err := helper.HandleDownloadSize(b.Log, rmsg, file.Name, int64(file.Size), b.General); err != nil {
+// 		b.Log.WithError(err).Infof("Skipping download of incoming file.")
+// 		return nil
+// 	}
 
-	// Actually download the file.
-	data, err := helper.DownloadFileAuth(file.URLPrivateDownload, "Bearer "+b.GetString(tokenConfig))
-	if err != nil {
-		return fmt.Errorf("download %s failed %#v", file.URLPrivateDownload, err)
-	}
+// 	// Actually download the file.
+// 	data, err := helper.DownloadFileAuth(file.URLPrivateDownload, "Bearer "+b.GetString(tokenConfig))
+// 	if err != nil {
+// 		return fmt.Errorf("download %s failed %#v", file.URLPrivateDownload, err)
+// 	}
 
-	if len(*data) != file.Size && !retry {
-		b.Log.Debugf("Data size (%d) is not equal to size declared (%d)\n", len(*data), file.Size)
-		time.Sleep(1 * time.Second)
-		return b.handleDownloadFile(rmsg, file, true)
-	}
+// 	if len(*data) != file.Size && !retry {
+// 		b.Log.Debugf("Data size (%d) is not equal to size declared (%d)\n", len(*data), file.Size)
+// 		time.Sleep(1 * time.Second)
+// 		return b.handleDownloadFile(rmsg, file, true)
+// 	}
 
-	// If a comment is attached to the file(s) it is in the 'Text' field of the Slack messge event
-	// and should be added as comment to only one of the files. We reset the 'Text' field to ensure
-	// that the comment is not duplicated.
-	comment := rmsg.Text
-	rmsg.Text = ""
-	helper.HandleDownloadData2(b.Log, rmsg, file.Name, file.ID, comment, file.URLPrivateDownload, data, b.General)
-	return nil
-}
+// 	// If a comment is attached to the file(s) it is in the 'Text' field of the Slack messge event
+// 	// and should be added as comment to only one of the files. We reset the 'Text' field to ensure
+// 	// that the comment is not duplicated.
+// 	comment := rmsg.Text
+// 	rmsg.Text = ""
+// 	helper.HandleDownloadData2(b.Log, rmsg, file.Name, file.ID, comment, file.URLPrivateDownload, data, b.General)
+// 	return nil
+// }
 
 func (b *Bslack) handleDownloadFile2(rmsg *config.Message, file *slackevents.File, retry bool) error {
 	if b.fileCached2(file) {
@@ -648,14 +710,14 @@ func (b *Bslack) handleGetChannelMembers(rmsg *config.Message) bool {
 // identically named file but with different content will be uploaded correctly
 // (the assumption is that such name collisions will not occur within the given
 // timeframes).
-func (b *Bslack) fileCached(file *slack.File) bool {
-	if ts, ok := b.cache.Get("file" + file.ID); ok && time.Since(ts.(time.Time)) < time.Minute {
-		return true
-	} else if ts, ok = b.cache.Get("filename" + file.Name); ok && time.Since(ts.(time.Time)) < 10*time.Second {
-		return true
-	}
-	return false
-}
+// func (b *Bslack) fileCached(file *slack.File) bool {
+// 	if ts, ok := b.cache.Get("file" + file.ID); ok && time.Since(ts.(time.Time)) < time.Minute {
+// 		return true
+// 	} else if ts, ok = b.cache.Get("filename" + file.Name); ok && time.Since(ts.(time.Time)) < 10*time.Second {
+// 		return true
+// 	}
+// 	return false
+// }
 
 func (b *Bslack) fileCached2(file *slackevents.File) bool {
 	if ts, ok := b.cache.Get("file" + file.ID); ok && time.Since(ts.(time.Time)) < time.Minute {

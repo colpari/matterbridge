@@ -120,6 +120,9 @@ func (b *users) invalidateUser(userID string) {
 }
 
 func (b *users) populateUsers(wait bool) {
+	// mutex anschauen wo verlässt er die funktion
+
+	// prüft ob das warten deaktiviert und der Thread auf die ressourcen zugreifen kann
 	b.refreshMutex.Lock()
 	if !wait && (time.Now().Before(b.earliestRefresh) || b.refreshInProgress) {
 		b.log.Debugf("Not refreshing user list as it was done less than %v ago.", minimumRefreshInterval)
@@ -136,6 +139,7 @@ func (b *users) populateUsers(wait bool) {
 	b.refreshMutex.Unlock()
 
 	newUsers := map[string]*slack.User{}
+	//pagination-Struktur initialisiert, um die Benutzerdaten in Seiten abzurufen
 	pagination := b.sc.GetUsersPaginated(slack.GetUsersOptionLimit(200))
 	count := 0
 	for {
@@ -232,6 +236,7 @@ func (b *channels) getChannelMembers(users *users) config.ChannelMembers {
 	defer b.channelMembersMutex.RUnlock()
 
 	membersInfo := config.ChannelMembers{}
+	fmt.Println("This is the user parameter :: ", users)
 	for channelID, members := range b.channelMembers {
 		for _, member := range members {
 			channelName := ""
@@ -268,76 +273,77 @@ func (b *channels) registerChannel(channel slack.Channel) {
 }
 
 func (b *channels) populateChannels(wait bool) {
-	b.refreshMutex.Lock()
-	if !wait && (time.Now().Before(b.earliestRefresh) || b.refreshInProgress) {
-		b.log.Debugf("Not refreshing channel list as it was done less than %v seconds ago.", minimumRefreshInterval)
-		b.refreshMutex.Unlock()
-		return
-	}
-	for b.refreshInProgress {
-		b.refreshMutex.Unlock()
-		time.Sleep(time.Second)
-		b.refreshMutex.Lock()
-	}
-	b.refreshInProgress = true
-	b.refreshMutex.Unlock()
+	// b.refreshMutex.Lock()
+	// if !wait && (time.Now().Before(b.earliestRefresh) || b.refreshInProgress) {
+	// 	b.log.Debugf("Not refreshing channel list as it was done less than %v seconds ago.", minimumRefreshInterval)
+	// 	b.refreshMutex.Unlock()
+	// 	return
+	// }
+	// for b.refreshInProgress {
+	// 	b.refreshMutex.Unlock()
+	// 	time.Sleep(time.Second)
+	// 	b.refreshMutex.Lock()
+	// }
+	// b.refreshInProgress = true
+	// b.refreshMutex.Unlock()
 
 	newChannelsByID := map[string]*slack.Channel{}
 	newChannelsByName := map[string]*slack.Channel{}
 	newChannelMembers := make(map[string][]string)
 
-	// We only retrieve public and private channels, not IMs
-	// and MPIMs as those do not have a channel name.
-	queryParams := &slack.GetConversationsParameters{
-		ExcludeArchived: true,
-		Types:           []string{"public_channel,private_channel"},
-		Limit:           1000,
-	}
-	for {
-		channels, nextCursor, err := b.sc.GetConversations(queryParams)
-		if err != nil {
-			if err = handleRateLimit(b.log, err); err != nil {
-				b.log.Errorf("Could not retrieve channels: %#v", err)
-				return
-			}
-			continue
-		}
+	// // We only retrieve public and private channels, not IMs
+	// // and MPIMs as those do not have a channel name.
+	// queryParams := &slack.GetConversationsParameters{
+	// 	ExcludeArchived: true,
+	// 	Types:           []string{"public_channel,private_channel"},
+	// 	Limit:           1000,
+	// }
+	// for {
+	// 	channels, nextCursor, err := b.sc.GetConversations(queryParams)
+	// 	if err != nil {
+	// 		if err = handleRateLimit(b.log, err); err != nil {
+	// 			b.log.Errorf("Could not retrieve channels: %#v", err)
+	// 			return
+	// 		}
+	// 		continue
+	// 	}
 
-		for i := range channels {
-			newChannelsByID[channels[i].ID] = &channels[i]
-			newChannelsByName[channels[i].Name] = &channels[i]
-			// also find all the members in every channel
-			// comment for now, issues on big slacks
-			/*
-				members, err := b.getUsersInConversation(channels[i].ID)
-				if err != nil {
-					if err = b.handleRateLimit(err); err != nil {
-						b.Log.Errorf("Could not retrieve channel members: %#v", err)
-						return
-					}
-					continue
-				}
-				newChannelMembers[channels[i].ID] = members
-			*/
-		}
+	// 	for i := range channels {
+	// 		newChannelsByID[channels[i].ID] = &channels[i]
+	// 		newChannelsByName[channels[i].Name] = &channels[i]
+	// 		// also find all the members in every channel
+	// 		// comment for now, issues on big slacks
+	// 		/*
+	// 			members, err := b.getUsersInConversation(channels[i].ID)
+	// 			if err != nil {
+	// 				if err = b.handleRateLimit(err); err != nil {
+	// 					b.Log.Errorf("Could not retrieve channel members: %#v", err)
+	// 					return
+	// 				}
+	// 				continue
+	// 			}
+	// 			newChannelMembers[channels[i].ID] = members
+	// 		*/
+	// 	}
 
-		if nextCursor == "" {
-			break
-		}
-		queryParams.Cursor = nextCursor
-	}
+	// 	if nextCursor == "" {
+	// 		break
+	// 	}
+	// 	queryParams.Cursor = nextCursor
+	// }
 
-	b.channelsMutex.Lock()
-	defer b.channelsMutex.Unlock()
+	// b.channelsMutex.Lock()
+	// defer b.channelsMutex.Unlock()
 	b.channelsByID = newChannelsByID
 	b.channelsByName = newChannelsByName
 
-	b.channelMembersMutex.Lock()
-	defer b.channelMembersMutex.Unlock()
+	// b.channelMembersMutex.Lock()
+	// defer b.channelMembersMutex.Unlock()
 	b.channelMembers = newChannelMembers
-
-	b.refreshMutex.Lock()
-	defer b.refreshMutex.Unlock()
+	// get channel members ein log rein und die maps leer machen
+	// b.refreshMutex.Lock()
+	// defer b.refreshMutex.Unlock()
 	b.earliestRefresh = time.Now().Add(minimumRefreshInterval)
 	b.refreshInProgress = false
+
 }

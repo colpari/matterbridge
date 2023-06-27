@@ -58,14 +58,14 @@ import (
 
 func (b *Bslack) populateReceivedMessage2(ev *slackevents.MessageEvent) (*config.Message, error) {
 	// Use our own func because rtm.GetChannelInfo doesn't work for private channels.
-	channel, err := b.channels.getChannelByID(ev.Channel)
-	if err != nil {
-		return nil, err
-	}
+	// channel, err := b.channels.getChannelByID(ev.Channel)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	rmsg := &config.Message{
-		Text:     ev.Text,
-		Channel:  channel.Name,
+		Text: ev.Text,
+		//Channel:  channel.Name,
 		Account:  b.Account,
 		ID:       ev.TimeStamp,
 		Extra:    make(map[string][]interface{}),
@@ -73,7 +73,7 @@ func (b *Bslack) populateReceivedMessage2(ev *slackevents.MessageEvent) (*config
 		Protocol: b.Protocol,
 	}
 	if b.useChannelID {
-		rmsg.Channel = "ID:" + channel.ID
+		rmsg.Channel = "ID:" + ev.Channel
 	}
 
 	//Handle 'edit' messages.
@@ -91,8 +91,8 @@ func (b *Bslack) populateReceivedMessage2(ev *slackevents.MessageEvent) (*config
 	if ev.Message != nil {
 		rmsg.ParentID = ev.Message.ThreadTimeStamp
 	}
-
-	if err = b.populateMessageWithUserInfo2(ev, rmsg); err != nil {
+	err := b.populateMessageWithUserInfo2(ev, rmsg)
+	if err != nil {
 		return nil, err
 	}
 	return rmsg, err
