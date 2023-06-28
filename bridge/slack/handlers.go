@@ -601,20 +601,20 @@ func (b *Bslack) handleAttachments2(ev *slackevents.MessageEvent, rmsg *config.M
 	}
 }
 
-func (b *Bslack) handleTypingEvent(ev *slack.UserTypingEvent) (*config.Message, error) {
-	if ev.User == b.si.User.ID {
-		return nil, ErrEventIgnored
-	}
-	channelInfo, err := b.channels.getChannelByID(ev.Channel)
-	if err != nil {
-		return nil, err
-	}
-	return &config.Message{
-		Channel: channelInfo.Name,
-		Account: b.Account,
-		Event:   config.EventUserTyping,
-	}, nil
-}
+// func (b *Bslack) handleTypingEvent(ev *slack.UserTypingEvent) (*config.Message, error) {
+// 	if ev.User == b.si.User.ID {
+// 		return nil, ErrEventIgnored
+// 	}
+// 	channelInfo, err := b.channels.getChannelByID(ev.Channel)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return &config.Message{
+// 		Channel: channelInfo.Name,
+// 		Account: b.Account,
+// 		Event:   config.EventUserTyping,
+// 	}, nil
+// }
 
 // // handleDownloadFile handles file download
 // func (b *Bslack) handleDownloadFile(rmsg *config.Message, file *slack.File, retry bool) error {
@@ -681,26 +681,27 @@ func (b *Bslack) handleDownloadFile2(rmsg *config.Message, file *slackevents.Fil
 
 // handleGetChannelMembers handles messages containing the GetChannelMembers event
 // Sends a message to the router containing *config.ChannelMembers
-func (b *Bslack) handleGetChannelMembers(rmsg *config.Message) bool {
-	if rmsg.Event != config.EventGetChannelMembers {
-		return false
-	}
+// ------------------------------------------------------------- now changed ------------------------------
+// func (b *Bslack) handleGetChannelMembers(rmsg *config.Message) bool {
+// 	if rmsg.Event != config.EventGetChannelMembers {
+// 		return false
+// 	}
 
-	cMembers := b.channels.getChannelMembers(b.users)
+// 	cMembers := b.channels.getChannelMembers(b.users)
 
-	extra := make(map[string][]interface{})
-	extra[config.EventGetChannelMembers] = append(extra[config.EventGetChannelMembers], cMembers)
-	msg := config.Message{
-		Extra:   extra,
-		Event:   config.EventGetChannelMembers,
-		Account: b.Account,
-	}
+// 	extra := make(map[string][]interface{})
+// 	extra[config.EventGetChannelMembers] = append(extra[config.EventGetChannelMembers], cMembers)
+// 	msg := config.Message{
+// 		Extra:   extra,
+// 		Event:   config.EventGetChannelMembers,
+// 		Account: b.Account,
+// 	}
+// ------------------------------------------------------------- now changed ------------------------------
+// 	b.Log.Debugf("sending msg to remote %#v", msg)
+// 	b.Remote <- msg
 
-	b.Log.Debugf("sending msg to remote %#v", msg)
-	b.Remote <- msg
-
-	return true
-}
+// 	return true
+// }
 
 // fileCached implements Matterbridge's caching logic for files
 // shared via Slack.
