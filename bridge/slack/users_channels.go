@@ -2,12 +2,11 @@ package bslack
 
 import (
 	"context"
-	"fmt"
-	"strings"
+	//"fmt"
 	"sync"
 	"time"
 
-	"github.com/42wim/matterbridge/bridge/config"
+	//"github.com/42wim/matterbridge/bridge/config"
 	"github.com/sirupsen/logrus"
 	"github.com/slack-go/slack"
 )
@@ -206,63 +205,68 @@ func newChannelManager(log *logrus.Entry, sc *slack.Client) *channels {
 	}
 }
 
-func (b *channels) getChannel(channel string) (*slack.Channel, error) {
-	if strings.HasPrefix(channel, "ID:") {
-		return b.getChannelByID(strings.TrimPrefix(channel, "ID:"))
-	}
-	return b.getChannelByName(channel)
-}
+// ------------------------------------------------------------- now changed ------------------------------
+// func (b *channels) getChannel(channel string) (*slack.Channel, error) {
+// 	if strings.HasPrefix(channel, "ID:") {
+// 		return b.getChannelByID(strings.TrimPrefix(channel, "ID:"))
+// 	}
+// 	return b.getChannelByName(channel)
+// }
 
-func (b *channels) getChannelByName(name string) (*slack.Channel, error) {
-	return b.getChannelBy(name, b.channelsByName)
-}
+// func (b *channels) getChannelByName(name string) (*slack.Channel, error) {
+// 	return b.getChannelBy(name, b.channelsByName)
+// }
 
-func (b *channels) getChannelByID(id string) (*slack.Channel, error) {
-	return b.getChannelBy(id, b.channelsByID)
-}
+// func (b *channels) getChannelByID(id string) (*slack.Channel, error) {
+// 	return b.getChannelBy(id, b.channelsByID)
+// }
 
-func (b *channels) getChannelBy(lookupKey string, lookupMap map[string]*slack.Channel) (*slack.Channel, error) {
-	b.channelsMutex.RLock()
-	defer b.channelsMutex.RUnlock()
+// func (b *channels) getChannelBy(lookupKey string, lookupMap map[string]*slack.Channel) (*slack.Channel, error) {
+// 	b.channelsMutex.RLock()
+// 	defer b.channelsMutex.RUnlock()
 
-	if channel, ok := lookupMap[lookupKey]; ok {
-		return channel, nil
-	}
-	return nil, fmt.Errorf("channel %s not found", lookupKey)
-}
+// 	if channel, ok := lookupMap[lookupKey]; ok {
+// 		return channel, nil
+// 	}
+// 	return nil, fmt.Errorf("channel %s not found", lookupKey)
+// }
 
-func (b *channels) getChannelMembers(users *users) config.ChannelMembers {
-	b.channelMembersMutex.RLock()
-	defer b.channelMembersMutex.RUnlock()
+// ------------------------------------------------------------- now changed ------------------------------
 
-	membersInfo := config.ChannelMembers{}
-	fmt.Println("This is the user parameter :: ", users)
-	for channelID, members := range b.channelMembers {
-		for _, member := range members {
-			channelName := ""
-			userName := ""
-			userNick := ""
-			user := users.getUser(member)
-			if user != nil {
-				userName = user.Name
-				userNick = user.Profile.DisplayName
-			}
-			channel, _ := b.getChannelByID(channelID)
-			if channel != nil {
-				channelName = channel.Name
-			}
-			memberInfo := config.ChannelMember{
-				Username:    userName,
-				Nick:        userNick,
-				UserID:      member,
-				ChannelID:   channelID,
-				ChannelName: channelName,
-			}
-			membersInfo = append(membersInfo, memberInfo)
-		}
-	}
-	return membersInfo
-}
+// ------------------------------------------------------------- now changed ------------------------------
+// func (b *channels) getChannelMembers(users *users) config.ChannelMembers {
+// 	b.channelMembersMutex.RLock()
+// 	defer b.channelMembersMutex.RUnlock()
+
+// 	membersInfo := config.ChannelMembers{}
+// 	fmt.Println("This is the user parameter :: ", users)
+// 	for channelID, members := range b.channelMembers {
+// 		for _, member := range members {
+// 			channelName := ""
+// 			userName := ""
+// 			userNick := ""
+// 			user := users.getUser(member)
+// 			if user != nil {
+// 				userName = user.Name
+// 				userNick = user.Profile.DisplayName
+// 			}
+// 			channel, _ := b.getChannelByID(channelID)
+// 			if channel != nil {
+// 				channelName = channel.Name
+// 			}
+// 			memberInfo := config.ChannelMember{
+// 				Username:    userName,
+// 				Nick:        userNick,
+// 				UserID:      member,
+// 				ChannelID:   channelID,
+// 				ChannelName: channelName,
+// 			}
+// 			membersInfo = append(membersInfo, memberInfo)
+// 		}
+// 	}
+// 	return membersInfo
+// }
+// ------------------------------------------------------------- now changed ------------------------------
 
 func (b *channels) registerChannel(channel slack.Channel) {
 	b.channelsMutex.Lock()
