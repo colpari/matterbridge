@@ -64,17 +64,17 @@ func (b *Bslack) populateReceivedMessage2(ev *slackevents.MessageEvent) (*config
 	// }
 
 	rmsg := &config.Message{
-		Text: ev.Text,
-		//Channel:  channel.Name,
+		Text:     ev.Text,
+		Channel:  ev.Channel,
 		Account:  b.Account,
 		ID:       ev.TimeStamp,
 		Extra:    make(map[string][]interface{}),
 		ParentID: ev.ThreadTimeStamp,
 		Protocol: b.Protocol,
 	}
-	if b.useChannelID {
-		rmsg.Channel = "ID:" + ev.Channel
-	}
+	// if b.useChannelID {
+	// 	rmsg.Channel = "ID:" + ev.Channel
+	// }
 
 	//Handle 'edit' messages.
 	if ev.Message != nil && !b.GetBool(editDisableConfig) {
