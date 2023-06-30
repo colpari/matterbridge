@@ -152,7 +152,8 @@ func (b *Bslack) handleSlackClient(messages chan *config.Message) {
 					case *slackevents.MemberJoinedChannelEvent:
 						fmt.Printf("user %q joined to channel %q", ev.User, ev.Channel)
 					case *slackevents.MessageEvent:
-
+						config := b.Config                        // Erstelle ein Config-Objekt
+						b.channels.populateChannels(true, config) // Übergebe das bool-Argument und das
 						if b.skipMessageEvent2(ev) {
 							b.Log.Debugf("Skipped message: %#v", ev)
 							continue

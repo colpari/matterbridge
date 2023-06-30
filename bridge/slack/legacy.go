@@ -32,8 +32,8 @@ func (b *BLegacy) Connect() error {
 		case b.GetString(tokenConfig) != "":
 			b.Log.Info("Connecting using token (sending)")
 			b.sc = slack.New(b.GetString(tokenConfig))
-			b.rtm = b.sc.NewRTM()
-			go b.rtm.ManageConnection()
+			//b.rtm = b.sc.NewRTM()
+			//go b.rtm.ManageConnection()
 			b.Log.Info("Connecting using webhookbindaddress (receiving)")
 			b.mh = matterhook.New(b.GetString(outgoingWebhookConfig), matterhook.Config{
 				InsecureSkipVerify: b.GetBool(skipTLSConfig),
@@ -60,8 +60,8 @@ func (b *BLegacy) Connect() error {
 			b.sc = slack.New(b.GetString(tokenConfig), slack.OptionDebug(b.GetBool("debug")))
 			b.channels = newChannelManager(b.Log, b.sc)
 			b.users = newUserManager(b.Log, b.sc)
-			b.rtm = b.sc.NewRTM()
-			go b.rtm.ManageConnection()
+			//b.rtm = b.sc.NewRTM()
+			//go b.rtm.ManageConnection()
 			go b.handleSlack()
 		}
 	} else if b.GetString(tokenConfig) != "" {
@@ -69,8 +69,8 @@ func (b *BLegacy) Connect() error {
 		b.sc = slack.New(b.GetString(tokenConfig), slack.OptionDebug(b.GetBool("debug")))
 		b.channels = newChannelManager(b.Log, b.sc)
 		b.users = newUserManager(b.Log, b.sc)
-		b.rtm = b.sc.NewRTM()
-		go b.rtm.ManageConnection()
+		//b.rtm = b.sc.NewRTM()
+		//go b.rtm.ManageConnection()
 		go b.handleSlack()
 	}
 	if b.GetString(incomingWebhookConfig) == "" && b.GetString(outgoingWebhookConfig) == "" && b.GetString(tokenConfig) == "" {

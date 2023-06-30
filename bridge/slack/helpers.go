@@ -212,7 +212,7 @@ func (b *Bslack) populateMessageWithBotInfo2(ev *slackevents.MessageEvent, rmsg 
 	var err error
 	var bot *slack.Bot
 	for {
-		bot, err = b.rtm.GetBotInfo(ev.BotID)
+		bot, err = b.ssm.GetBotInfo(ev.BotID)
 		if err == nil {
 			break
 		}

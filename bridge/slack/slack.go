@@ -27,8 +27,8 @@ type Bslack struct {
 	mh  *matterhook.Client
 	ssm *socketmode.Client // socketmode einfügen
 	sc  *slack.Client
-	rtm *slack.RTM
-	si  *slack.Info
+	//rtm *slack.RTM
+	si *slack.Info
 
 	cache *lru.Cache
 	uuid  string
@@ -166,9 +166,9 @@ func (b *Bslack) Connect() error {
 	return nil
 }
 
-func (b *Bslack) Disconnect() error {
-	return b.rtm.Disconnect()
-}
+// func (b *Bslack) Disconnect() error {
+// 	return b.ssm.Disconnect()
+// }
 
 // JoinChannel only acts as a verification method that checks whether Matterbridge's
 // Slack integration is already member of the channel. This is because Slack does not
@@ -194,7 +194,7 @@ func (b *Bslack) JoinChannel(channel config.ChannelInfo) error {
 		return nil
 	}
 
-	b.channels.populateChannels(false)
+	b.channels.populateChannels(false, b.Config)
 	// ------------------------------------------------------------- now changed ------------------------------
 	// channelInfo, err := b.channels.getChannel(channel.Name)
 	// if err != nil {
@@ -445,29 +445,30 @@ func (b *Bslack) sendSlackEventsAPI(msg config.Message) (string, error) {
 
 // ------------------------------------------------------------- now changed ------------------------------
 
-func (b *Bslack) updateTopicOrPurpose(msg *config.Message, channelInfo *slack.Channel) error {
-	var updateFunc func(channelID string, value string) (*slack.Channel, error)
+// ------------------------------------------------------------- now changed ------------------------------
+// func (b *Bslack) updateTopicOrPurpose(msg *config.Message, channelInfo *slack.Channel) error {
+// 	var updateFunc func(channelID string, value string) (*slack.Channel, error)
 
-	incomingChangeType, text := b.extractTopicOrPurpose(msg.Text)
-	switch incomingChangeType {
-	case "topic":
-		updateFunc = b.rtm.SetTopicOfConversation
-	case "purpose":
-		updateFunc = b.rtm.SetPurposeOfConversation
-	default:
-		b.Log.Errorf("Unhandled type received from extractTopicOrPurpose: %s", incomingChangeType)
-		return nil
-	}
-	for {
-		_, err := updateFunc(channelInfo.ID, text)
-		if err == nil {
-			return nil
-		}
-		if err = handleRateLimit(b.Log, err); err != nil {
-			return err
-		}
-	}
-}
+// 	incomingChangeType, text := b.extractTopicOrPurpose(msg.Text)
+// 	switch incomingChangeType {
+// 	case "topic":
+// 		updateFunc = b.rtm.SetTopicOfConversation
+// 	case "purpose":
+// 		updateFunc = b.rtm.SetPurposeOfConversation
+// 	default:
+// 		b.Log.Errorf("Unhandled type received from extractTopicOrPurpose: %s", incomingChangeType)
+// 		return nil
+// 	}
+// 	for {
+// 		_, err := updateFunc(channelInfo.ID, text)
+// 		if err == nil {
+// 			return nil
+// 		}
+// 		if err = handleRateLimit(b.Log, err); err != nil {
+// 			return err
+// 		}
+// 	}
+// }
 
 // handles updating topic/purpose and determining whether to further propagate update messages.
 func (b *Bslack) handleTopicOrPurpose(msg *config.Message, channelInfo *slack.Channel) (bool, error) {
@@ -475,9 +476,9 @@ func (b *Bslack) handleTopicOrPurpose(msg *config.Message, channelInfo *slack.Ch
 		return false, nil
 	}
 
-	if b.GetBool("SyncTopic") {
-		return true, b.updateTopicOrPurpose(msg, channelInfo)
-	}
+	// if b.GetBool("SyncTopic") {
+	// 	return true, b.updateTopicOrPurpose(msg, channelInfo)
+	// }
 
 	// Pass along to normal message handlers.
 	if b.GetBool("ShowTopicChange") {
@@ -499,7 +500,7 @@ func (b *Bslack) deleteMessage(msg *config.Message) (bool, error) {
 	}
 
 	for {
-		_, _, err := b.rtm.DeleteMessage(msg.Channel, msg.ID)
+		_, _, err := b.ssm.DeleteMessage(msg.Channel, msg.ID)
 		if err == nil {
 			return true, nil
 		}
@@ -517,7 +518,7 @@ func (b *Bslack) editMessage(msg *config.Message) (bool, error) {
 	}
 	messageOptions := b.prepareMessageOptions(msg)
 	for {
-		_, _, _, err := b.rtm.UpdateMessage(msg.Channel, msg.ID, messageOptions...)
+		_, _, _, err := b.ssm.UpdateMessage(msg.Channel, msg.ID, messageOptions...)
 		if err == nil {
 			return true, nil
 		}
@@ -536,7 +537,7 @@ func (b *Bslack) postMessage(msg *config.Message) (string, error) {
 	}
 	messageOptions := b.prepareMessageOptions(msg)
 	for {
-		_, id, err := b.rtm.PostMessage(msg.Channel, messageOptions...)
+		_, id, err := b.ssm.PostMessage(msg.Channel, messageOptions...)
 		if err == nil {
 			return id, nil
 		}
