@@ -317,8 +317,8 @@ func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 	// var newChannelsByID = make(map[string]*slack.Channel)
 	// var newChannelsByName = make(map[string]*slack.Channel)
 	// var newChannelMembers = make(map[string][]string)
-	//  configConfig := cfg.Config
-	//  configConfigData := configConfig.
+	cfgConfig := cfg.Config
+	fmt.Printf("cfgConfig: %+v\n", cfgConfig)
 
 	if cfg.Bridge != nil && cfg.Bridge.Channels != nil {
 		channels := cfg.Bridge.Channels
