@@ -1,0 +1,19 @@
+FROM golang:latest as BUILDER
+
+ADD . /src/
+
+WORKDIR /src/
+
+RUN go build -v -mod vendor -o matterbridge
+
+
+
+FROM alpine
+
+RUN apk --no-cache add ca-certificates mailcap
+
+COPY --from=BUILDER /src/matterbridge /bin/matterbridge
+
+RUN adduser -u 1000 -D matterbridge matterbridge && mkdir -vp /etc/matterbridge/
+
+ENTRYPOINT ["/bin/matterbridge", "-conf", "/etc/matterbridge/matterbridge.toml"]
