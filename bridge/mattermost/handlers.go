@@ -180,7 +180,7 @@ func (b *Bmattermost) handleUploadFile(msg *config.Message) (string, error) {
 		}
 		msg.Text = fi.Comment
 		if b.GetBool("PrefixMessagesWithNick") {
-			msg.Text = msg.Username + msg.Text
+			msg.Text = "[ " + msg.Username + " | " + "<@" + msg.UserID + ">" + " ]: " + msg.Text
 		}
 		res, err = b.mc.PostMessageWithFiles(channelID, msg.Text, msg.ParentID, []string{id})
 	}
