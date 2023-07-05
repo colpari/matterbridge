@@ -317,57 +317,56 @@ func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 	// var newChannelsByID = make(map[string]*slack.Channel)
 	// var newChannelsByName = make(map[string]*slack.Channel)
 	// var newChannelMembers = make(map[string][]string)
-	cfgConfig := cfg.Config
-	fmt.Printf("cfgConfig: %+v\n", cfgConfig)
+	if cfg != nil {
+		// Zugriff auf das Config-Interface
+		configInterface := cfg.Config
 
-	if cfg.Bridge != nil && cfg.Bridge.Channels != nil {
-		channels := cfg.Bridge.Channels
-
-		for key, value := range channels {
-			fmt.Println("Key:", key)
-			fmt.Println("Value:", value)
-		}
-	} else {
-		fmt.Println("Fehler: cfg.Bridge oder cfg.Bridge.Channels ist Nil.")
-	}
-	// die map mi slack.channel mit der channel info fühlen
-	if cfg.Bridge != nil {
-		// Überprüfe, ob das Channels-Feld nicht nil ist und nur einen Eintrag enthält.
-		if cfg.Bridge.Channels != nil && len(cfg.Bridge.Channels) == 1 {
+		// Überprüfen, ob das Interface nil ist
+		if configInterface != nil {
 			var channelID string
 			var channelInfo config.ChannelInfo
+			var channelInfoName string
 
-			// Durchlaufe die Kanäle in der Map.
-			for id, info := range cfg.Bridge.Channels {
-				channelID = extractID(id)
+			// Durchlaufe die Kanäle in der Map um die chInfo zu holen.
+			for _, info := range cfg.Bridge.Channels {
 				channelInfo = info
 				break
 			}
-
-			// slackChannel := &slack.Channel{}
-			// channelConversation := slackChannel.Conversation
-			// channel := channelConversation{
-			// 	ID:   channelID,
-			// 	Name: channelInfo.Name,
-			// 	// Wenn benötigt wird setzten wir mehr felder
-			// }
-			// Erstelle ein neues slack.Channel-Objekt mit den entsprechenden Informationen.
+			// Den Ch
 			channelConversationInfo := slack.Channel{
 				GroupConversation: slack.GroupConversation{
-					Conversation: slack.Conversation{
-						ID: channelID,
-					},
 					Name: channelInfo.Name,
 				},
 			}
-			fmt.Println("Channel:", channelConversationInfo)
 
-			// channelConversation := channelConversationGroup.Conversation(
-			// 	ID:   channelID,
-			// 	Name: channelInfo.Name,
-			// )
+			//fmt.Println("Channel:", channelConversationInfo)
 
-			// Speichere den Channel in channelsByID mit der ID als Schlüssel.
+			// Hier können Sie auf die Werte im Config-Objekt zugreifen
+			//v := configInterface.Viper()
+			bridgeValues := configInterface.BridgeValues()
+			bridgeValueGateway := bridgeValues.Gateway
+
+			// fmt.Println("Viper:", v)
+			// fmt.Println("bridgeValues:", bridgeValues)
+			// fmt.Println("bridgeValueGateway:", bridgeValueGateway)
+
+			for _, bridge := range bridgeValueGateway {
+				// Zugriff auf das InOut-Feld
+				inout := bridge.InOut
+				found := false // Variable zum Verfolgen, ob der gewünschte Wert gefunden wurde
+				for _, InOutValue := range inout {
+					if InOutValue.Account == "slack.colpari" {
+						channelID = InOutValue.Channel // Aktualisieren des channelID-Werts
+						found = true
+						break
+					}
+				}
+				if !found {
+					fmt.Println("Der gewünschte Wert wurde nicht gefunden.")
+				}
+			}
+
+			// channelID verwenden und in newChannelsByID speichern
 			newChannelsByID := make(map[string]*slack.Channel)
 			newChannelsByID[channelID] = &channelConversationInfo
 
@@ -382,21 +381,93 @@ func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 			// leere channel Members map
 			var newChannelMembers = make(map[string][]string)
 
-			// Jetzt kannst du die extrahierte ID und die beiden Maps verwenden.
-			fmt.Println("ID:", channelID)
-			fmt.Println("channelsByID:", newChannelsByID)
-			fmt.Println("channelsByName:", newChannelsByName)
-
 			b.channelsByID = newChannelsByID
 			b.channelsByName = newChannelsByName
 			b.channelMembers = newChannelMembers
 
-		} else {
-			fmt.Println("Error: cfg.Bridge Nil or cfg.Bridge.Channels len greater than 1.")
+			b.earliestRefresh = time.Now().Add(minimumRefreshInterval)
+			b.refreshInProgress = false
+
+		}
+	}
+
+	if cfg.Bridge != nil && cfg.Bridge.Channels != nil {
+		channels := cfg.Bridge.Channels
+
+		for key, value := range channels {
+			fmt.Println("Key:", key)
+			fmt.Println("Value:", value)
 		}
 	} else {
-		fmt.Println("Error: cfg.Bridge Nil.")
+		fmt.Println("Fehler: cfg.Bridge oder cfg.Bridge.Channels ist Nil.")
 	}
+	// die map mi slack.channel mit der channel info fühlen
+	// if cfg.Bridge != nil {
+	// 	// Überprüfe, ob das Channels-Feld nicht nil ist und nur einen Eintrag enthält.
+	// 	if cfg.Bridge.Channels != nil && len(cfg.Bridge.Channels) == 1 {
+	// 		var channelID string
+	// 		var channelInfo config.ChannelInfo
+
+	// 		// Durchlaufe die Kanäle in der Map.
+	// 		for id, info := range cfg.Bridge.Channels {
+	// 			channelID = extractID(id)
+	// 			channelInfo = info
+	// 			break
+	// 		}
+
+	// 		// slackChannel := &slack.Channel{}
+	// 		// channelConversation := slackChannel.Conversation
+	// 		// channel := channelConversation{
+	// 		// 	ID:   channelID,
+	// 		// 	Name: channelInfo.Name,
+	// 		// 	// Wenn benötigt wird setzten wir mehr felder
+	// 		// }
+	// 		// Erstelle ein neues slack.Channel-Objekt mit den entsprechenden Informationen.
+	// 		channelConversationInfo := slack.Channel{
+	// 			GroupConversation: slack.GroupConversation{
+	// 				Conversation: slack.Conversation{
+	// 					ID: channelID,
+	// 				},
+	// 				Name: channelInfo.Name,
+	// 			},
+	// 		}
+	// 		fmt.Println("Channel:", channelConversationInfo)
+
+	// 		// channelConversation := channelConversationGroup.Conversation(
+	// 		// 	ID:   channelID,
+	// 		// 	Name: channelInfo.Name,
+	// 		// )
+
+	// 		// Speichere den Channel in channelsByID mit der ID als Schlüssel.
+	// 		newChannelsByID := make(map[string]*slack.Channel)
+	// 		newChannelsByID[channelID] = &channelConversationInfo
+
+	// 		fmt.Println("newChannelsByID:", newChannelsByID)
+
+	// 		// Speichere den Channel in channelsByName mit dem Namen als Schlüssel.
+	// 		newChannelsByName := make(map[string]*slack.Channel)
+	// 		newChannelsByName[channelConversationInfo.Name] = &channelConversationInfo
+
+	// 		fmt.Println("newChannelsByName:", newChannelsByName)
+
+	// 		// leere channel Members map
+	// 		var newChannelMembers = make(map[string][]string)
+
+	// 		// Jetzt kannst du die extrahierte ID und die beiden Maps verwenden.
+	// 		fmt.Println("ID:", channelID)
+	// 		fmt.Println("channelsByID:", newChannelsByID)
+	// 		fmt.Println("channelsByName:", newChannelsByName)
+
+	// 		b.channelsByID = newChannelsByID
+	// 		b.channelsByName = newChannelsByName
+	// 		b.channelMembers = newChannelMembers
+
+	// 	} else {
+	// 		fmt.Println("Error: cfg.Bridge Nil or cfg.Bridge.Channels len greater than 1.")
+	// 	}
+	// } else {
+	// 	fmt.Println("Error: cfg.Bridge Nil.")
+	// }
 
 	// -------------------
 	// if cfg.Bridge != nil {
@@ -512,7 +583,7 @@ func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 	// get channel members ein log rein und die maps leer machen
 	// b.refreshMutex.Lock()
 	// defer b.refreshMutex.Unlock()
-	b.earliestRefresh = time.Now().Add(minimumRefreshInterval)
-	b.refreshInProgress = false
+	//b.earliestRefresh = time.Now().Add(minimumRefreshInterval)
+	//b.refreshInProgress = false
 
 }
