@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -191,14 +192,20 @@ func (b *Bslack) Reload(cfg *bridge.Config) (string, error) {
 	return "", nil
 }
 
+func insertTags(input string) string {
+	re := regexp.MustCompile(`(@[A-Za-z0-9]{11})`)
+	output := re.ReplaceAllString(input, "<$1>")
+	return output
+}
+
 func (b *Bslack) Send(msg config.Message) (string, error) {
 	// Too noisy to log like other events
 	if msg.Event != config.EventUserTyping {
 		b.Log.Debugf("=> Receiving %#v", msg)
 	}
-
-	msg.Text = helper.ClipMessage(msg.Text, messageLength, b.GetString("MessageClipped"))
-	msg.Text = b.replaceCodeFence(msg.Text)
+	formatierterText := insertTags(msg.Text)
+	msg.Text = helper.ClipMessage(formatierterText, messageLength, b.GetString("MessageClipped"))
+	msg.Text = b.replaceCodeFence(formatierterText)
 
 	// Make a action /me of the message
 	if msg.Event == config.EventUserAction {
@@ -248,7 +255,8 @@ func (b *Bslack) sendWebhook(msg config.Message) error {
 				continue
 			}
 			if fi.URL != "" {
-				msg.Text += " " + fi.URL
+				formatierterText := insertTags(msg.Text)
+				formatierterText += " " + fi.URL
 			}
 		}
 	}
@@ -453,6 +461,7 @@ func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, erro
 			b.Log.Errorf("Received a file with unexpected content: %#v", f)
 			continue
 		}
+		formatierterTextFile := insertTags(fi.Comment)
 		if msg.Text == fi.Comment {
 			msg.Text = ""
 		}
@@ -461,7 +470,7 @@ func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, erro
 		ts := time.Now()
 		b.Log.Debugf("Adding file %s to cache at %s with timestamp", fi.Name, ts.String())
 		b.cache.Add("filename"+fi.Name, ts)
-		//initialComment := fmt.Sprintf("File from %s", msg.Username)
+		// initialComment := fmt.Sprintf("File from %s", msg.Username)
 		// if fi.Comment != "" {
 		// 	initialComment += fmt.Sprintf(" with comment: %s", fi.Comment)
 		// }
@@ -469,7 +478,7 @@ func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, erro
 			Reader:          bytes.NewReader(*fi.Data),
 			Filename:        fi.Name,
 			Channels:        []string{channelID},
-			InitialComment:  fi.Comment,
+			InitialComment:  formatierterTextFile,
 			ThreadTimestamp: msg.ParentID,
 		})
 		if err != nil {

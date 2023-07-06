@@ -189,7 +189,7 @@ func (b *Bmattermost) Send(msg config.Message) (string, error) {
 
 	// Prepend nick if configured
 	if b.GetBool("PrefixMessagesWithNick") {
-		msg.Text = "[ " + msg.Username + " | " + "<@" + msg.UserID + ">" + " ]: " + msg.Text
+		msg.Text = "[ " + msg.Username + " | " + "@" + msg.UserID + " ]: " + msg.Text
 	}
 
 	// Edit message if we have an ID
@@ -198,6 +198,5 @@ func (b *Bmattermost) Send(msg config.Message) (string, error) {
 	}
 
 	// Post normal message
-	//
 	return b.mc.PostMessage(b.getChannelID(msg.Channel), msg.Text, msg.ParentID)
 }
