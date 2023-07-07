@@ -210,30 +210,30 @@ func newChannelManager(log *logrus.Entry, sc *slack.Client) *channels {
 }
 
 // ------------------------------------------------------------- now changed ------------------------------
-// func (b *channels) getChannel(channel string) (*slack.Channel, error) {
-// 	if strings.HasPrefix(channel, "ID:") {
-// 		return b.getChannelByID(strings.TrimPrefix(channel, "ID:"))
-// 	}
-// 	return b.getChannelByName(channel)
-// }
+func (b *channels) getChannel(channel string) (*slack.Channel, error) {
+	if strings.HasPrefix(channel, "ID:") {
+		return b.getChannelByID(strings.TrimPrefix(channel, "ID:"))
+	}
+	return b.getChannelByName(channel)
+}
 
-// func (b *channels) getChannelByName(name string) (*slack.Channel, error) {
-// 	return b.getChannelBy(name, b.channelsByName)
-// }
+func (b *channels) getChannelByName(name string) (*slack.Channel, error) {
+	return b.getChannelBy(name, b.channelsByName)
+}
 
-// func (b *channels) getChannelByID(id string) (*slack.Channel, error) {
-// 	return b.getChannelBy(id, b.channelsByID)
-// }
+func (b *channels) getChannelByID(id string) (*slack.Channel, error) {
+	return b.getChannelBy(id, b.channelsByID)
+}
 
-// func (b *channels) getChannelBy(lookupKey string, lookupMap map[string]*slack.Channel) (*slack.Channel, error) {
-// 	b.channelsMutex.RLock()
-// 	defer b.channelsMutex.RUnlock()
+func (b *channels) getChannelBy(lookupKey string, lookupMap map[string]*slack.Channel) (*slack.Channel, error) {
+	b.channelsMutex.RLock()
+	defer b.channelsMutex.RUnlock()
 
-// 	if channel, ok := lookupMap[lookupKey]; ok {
-// 		return channel, nil
-// 	}
-// 	return nil, fmt.Errorf("channel %s not found", lookupKey)
-// }
+	if channel, ok := lookupMap[lookupKey]; ok {
+		return channel, nil
+	}
+	return nil, fmt.Errorf("channel %s not found", lookupKey)
+}
 
 // ------------------------------------------------------------- now changed ------------------------------
 
@@ -325,7 +325,7 @@ func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 		if configInterface != nil {
 			var channelID string
 			var channelInfo config.ChannelInfo
-			var channelInfoName string
+			//var channelInfoName string
 
 			// Durchlaufe die Kanäle in der Map um die chInfo zu holen.
 			for _, info := range cfg.Bridge.Channels {
@@ -366,6 +366,10 @@ func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 				}
 			}
 
+			if strings.HasPrefix(channelInfo.Name, "ID:") {
+				channelID = strings.TrimPrefix(channelID, "ID:")
+			}
+
 			// channelID verwenden und in newChannelsByID speichern
 			newChannelsByID := make(map[string]*slack.Channel)
 			newChannelsByID[channelID] = &channelConversationInfo
@@ -373,6 +377,9 @@ func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 			fmt.Println("newChannelsByID:", newChannelsByID)
 
 			// Speichere den Channel in channelsByName mit dem Namen als Schlüssel.
+
+			channelConversationInfo.Name = strings.TrimPrefix(channelConversationInfo.Name, "ID:")
+
 			newChannelsByName := make(map[string]*slack.Channel)
 			newChannelsByName[channelConversationInfo.Name] = &channelConversationInfo
 
@@ -380,6 +387,8 @@ func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 
 			// leere channel Members map
 			var newChannelMembers = make(map[string][]string)
+
+			// Entfernen des Präfix "ID:" aus channelID
 
 			b.channelsByID = newChannelsByID
 			b.channelsByName = newChannelsByName
@@ -391,16 +400,16 @@ func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 		}
 	}
 
-	if cfg.Bridge != nil && cfg.Bridge.Channels != nil {
-		channels := cfg.Bridge.Channels
+	// if cfg.Bridge != nil && cfg.Bridge.Channels != nil {
+	// 	channels := cfg.Bridge.Channels
 
-		for key, value := range channels {
-			fmt.Println("Key:", key)
-			fmt.Println("Value:", value)
-		}
-	} else {
-		fmt.Println("Fehler: cfg.Bridge oder cfg.Bridge.Channels ist Nil.")
-	}
+	// 	for key, value := range channels {
+	// 		fmt.Println("Key:", key)
+	// 		fmt.Println("Value:", value)
+	// 	}
+	// } else {
+	// 	fmt.Println("Fehler: cfg.Bridge oder cfg.Bridge.Channels ist Nil.")
+	// }
 	// die map mi slack.channel mit der channel info fühlen
 	// if cfg.Bridge != nil {
 	// 	// Überprüfe, ob das Channels-Feld nicht nil ist und nur einen Eintrag enthält.
