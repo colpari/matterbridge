@@ -471,23 +471,23 @@ func (b *Bslack) sendSlackEventsAPI(msg config.Message) (string, error) {
 // }
 
 // handles updating topic/purpose and determining whether to further propagate update messages.
-func (b *Bslack) handleTopicOrPurpose(msg *config.Message, channelInfo *slack.Channel) (bool, error) {
-	if msg.Event != config.EventTopicChange {
-		return false, nil
-	}
+// func (b *Bslack) handleTopicOrPurpose(msg *config.Message, channelInfo *slack.Channel) (bool, error) {
+// 	if msg.Event != config.EventTopicChange {
+// 		return false, nil
+// 	}
 
-	// if b.GetBool("SyncTopic") {
-	// 	return true, b.updateTopicOrPurpose(msg, channelInfo)
-	// }
+// 	// if b.GetBool("SyncTopic") {
+// 	// 	return true, b.updateTopicOrPurpose(msg, channelInfo)
+// 	// }
 
-	// Pass along to normal message handlers.
-	if b.GetBool("ShowTopicChange") {
-		return false, nil
-	}
+// 	// Pass along to normal message handlers.
+// 	if b.GetBool("ShowTopicChange") {
+// 		return false, nil
+// 	}
 
-	// Swallow message as handled no-op.
-	return true, nil
-}
+// 	// Swallow message as handled no-op.
+// 	return true, nil
+// }
 
 func (b *Bslack) deleteMessage(msg *config.Message) (bool, error) {
 	if msg.Event != config.EventMsgDelete {

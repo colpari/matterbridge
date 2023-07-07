@@ -46,7 +46,7 @@ func (b *Bslack) handleSlack() {
 			message.Avatar = b.users.getAvatar(message.UserID)
 		}
 
-		b.Log.Debugf("<= Message is %#v", message)
+		b.Log.Debugf("<= SLACK SENDING Message to remote: %#v", message)
 		b.Remote <- *message
 	}
 }
@@ -358,14 +358,14 @@ func (b *Bslack) skipMessageEvent2(ev *slackevents.MessageEvent) bool {
 // 	return true
 // }
 
-func (b *Bslack) filesCached2(files []slackevents.File) bool {
-	for i := range files {
-		if !b.fileCached2(&files[i]) {
-			return false
-		}
-	}
-	return true
-}
+// func (b *Bslack) filesCached2(files []slackevents.File) bool {
+// 	for i := range files {
+// 		if !b.fileCached2(&files[i]) {
+// 			return false
+// 		}
+// 	}
+// 	return true
+// }
 
 // handleMessageEvent handles the message events. Together with any called sub-methods,
 // this method implements the following event processing pipeline:
