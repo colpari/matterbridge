@@ -94,7 +94,7 @@ func (b *Bmattermost) handleMatter() {
 //nolint:cyclop
 func (b *Bmattermost) handleMatterClient(messages chan *config.Message) {
 	for message := range b.mc.MessageChan {
-		b.Log.Debugf("%#v %#v", message.Raw.GetData(), message.Raw.EventType())
+		b.Log.Debugf("MATTERMOST RECEIVING %#v %#v", message.Raw.GetData(), message.Raw.EventType())
 
 		if b.skipMessage(message) {
 			b.Log.Debugf("Skipped message: %#v", message)
@@ -180,7 +180,7 @@ func (b *Bmattermost) handleUploadFile(msg *config.Message) (string, error) {
 		}
 		msg.Text = fi.Comment
 		if b.GetBool("PrefixMessagesWithNick") {
-			msg.Text = msg.Username + msg.Text
+			msg.Text = "[ " + msg.Username + " | " + "@" + msg.UserID + " ]\n " + msg.Text
 		}
 		res, err = b.mc.PostMessageWithFiles(channelID, msg.Text, msg.ParentID, []string{id})
 	}
