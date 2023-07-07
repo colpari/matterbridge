@@ -13,7 +13,7 @@ docker-build:
   script:
     - docker build --pull -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH" -f Dockerfile-colpari .
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
-    - docker push "$CI_REGISTRY_IMAGE:latest"
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH"
   rules:
     - if: $CI_COMMIT_BRANCH == "master-colpari" || $CI_COMMIT_BRANCH == "development-colpari"
       exists:
