@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -215,6 +216,12 @@ func (b *Bslack) JoinChannel(channel config.ChannelInfo) error {
 	// ------------------------------------------------------------- now changed ------------------------------
 }
 
+func insertTags(input string) string {
+	re := regexp.MustCompile(`(@[A-Za-z0-9]{11})`)
+	output := re.ReplaceAllString(input, "<$1>")
+	return output
+}
+
 func (b *Bslack) Reload(cfg *bridge.Config) (string, error) {
 	return "", nil
 }
@@ -225,7 +232,8 @@ func (b *Bslack) Send(msg config.Message) (string, error) {
 		b.Log.Debugf("=> Receiving %#v", msg)
 	}
 
-	msg.Text = helper.ClipMessage(msg.Text, messageLength, b.GetString("MessageClipped"))
+	formatierterText := insertTags(msg.Text)
+	msg.Text = helper.ClipMessage(formatierterText, messageLength, b.GetString("MessageClipped"))
 	msg.Text = b.replaceCodeFence(msg.Text)
 
 	// Make a action /me of the message
