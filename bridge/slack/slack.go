@@ -30,6 +30,7 @@ type Bslack struct {
 	sc  *slack.Client
 	//rtm *slack.RTM
 	si *slack.Info
+	//ui *slack.UserIdentityResponse
 
 	cache *lru.Cache
 	uuid  string
@@ -117,11 +118,8 @@ func (b *Bslack) Connect() error {
 		//userToken := "xoxp-432307700594-5253922647267-5407161992449-008973cd240f3a17e16b91b47fd1224d"
 		appToken := "xapp-1-A05CG7GG9MM-5436073309477-093ad4e2aada45dffb77c63f717216e35e13ee2c5f9aec450adc46ea9025d3d6"
 		botToken := "xoxb-432307700594-5451620874497-ck84KfSb3KsCAUM6RLBbQrNR"
-		// b.sc = slack.New(
-		// 	token,
-		// 	slack.OptionDebug(b.GetBool("Debug")),
-		// 	slack.OptionAppLevelToken(appToken),
-		// )
+		//VERIFICATION_TOKEN := "bPd5QWgH5vADq8TutvmGP2D1"
+
 		b.sc = slack.New(
 			botToken,
 			slack.OptionDebug(true),
@@ -287,7 +285,8 @@ func (b *Bslack) sendWebhook(msg config.Message) error {
 				continue
 			}
 			if fi.URL != "" {
-				msg.Text += " " + fi.URL
+				formatierterText := insertTags(msg.Text)
+				formatierterText += " " + fi.URL
 			}
 		}
 	}
@@ -566,6 +565,7 @@ func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, erro
 			b.Log.Errorf("Received a file with unexpected content: %#v", f)
 			continue
 		}
+		formatierterTextFile := insertTags(fi.Comment)
 		if msg.Text == fi.Comment {
 			msg.Text = ""
 		}
@@ -582,7 +582,7 @@ func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, erro
 			Reader:          bytes.NewReader(*fi.Data),
 			Filename:        fi.Name,
 			Channels:        []string{channelID},
-			InitialComment:  fi.Comment,
+			InitialComment:  formatierterTextFile,
 			ThreadTimestamp: msg.ParentID,
 		})
 		if err != nil {

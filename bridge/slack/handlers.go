@@ -18,6 +18,10 @@ import (
 // ErrEventIgnored is for events that should be ignored
 var ErrEventIgnored = errors.New("this event message should ignored")
 
+// if ev.SubType == "bot_message" {
+// 	b.Log.Debug("skipping own message")
+// 	return true // skip own message
+// } else {
 func (b *Bslack) handleSlack() {
 	messages := make(chan *config.Message)
 	if b.GetString(incomingWebhookConfig) != "" && b.GetString(tokenConfig) == "" {
@@ -161,6 +165,10 @@ func (b *Bslack) handleSlackClient(messages chan *config.Message) {
 						// Handle new message event here
 						fmt.Printf("New message: %+v\n", ev)
 						rmsg, err := b.handleMessageEvent2(ev)
+						if b.skipMessageEvent2(ev) {
+							b.Log.Debugf("Skipped message: %#v", ev)
+							continue
+						}
 						if err != nil {
 							b.Log.Errorf("%#v", err)
 							continue
@@ -256,7 +264,7 @@ func (b *Bslack) handleMatterHook(messages chan *config.Message) {
 }
 
 // // skipMessageEvent skips event that need to be skipped :-)
-// func (b *Bslack) skipMessageEvent(ev *slack.MessageEvent) bool {
+//func (b *Bslack) skipMessageEvent(ev *slack.MessageEvent) bool {
 // 	switch ev.SubType {
 // 	case sChannelLeave, sChannelJoin:
 // 		return b.GetBool(noSendJoinConfig)
@@ -301,6 +309,26 @@ func (b *Bslack) handleMatterHook(messages chan *config.Message) {
 // 	}
 // 	return false
 // }
+// func shouldSkipEvent(ev *slackevents.MessageEvent, api *slack.Client) bool {
+// 	// Überprüfen, ob der RTM-Client vorhanden ist (nicht relevant für die Slack API)
+// 	// if b.rtm != nil {
+// 	//     return true
+// 	// }
+
+// 	// Benutzerinformationen aus der Slack API abrufen
+// 	user, err := api.GetUserInfoContext(context.Background(), ev.User)
+// 	if err != nil {
+// 		// Fehlerbehandlung
+// 		return false
+// 	}
+
+// 	// Benutzernamen vergleichen
+// 	if user.Name == ev.Username {
+// 		return true
+// 	}
+
+// 	return false
+// }
 
 func (b *Bslack) skipMessageEvent2(ev *slackevents.MessageEvent) bool {
 	switch ev.SubType {
@@ -314,8 +342,9 @@ func (b *Bslack) skipMessageEvent2(ev *slackevents.MessageEvent) bool {
 			return true
 		}
 	}
+
 	// Check for our callback ID
-	//hasOurCallbackID := false
+	hasOurCallbackID := false
 	//TODO understendig what the hasOurCallbackID do
 	// if len(ev.Blocks.BlockSet) == 1 {
 	// 	block, ok := ev.Blocks.BlockSet[0].(*slack.SectionBlock)
@@ -338,14 +367,35 @@ func (b *Bslack) skipMessageEvent2(ev *slackevents.MessageEvent) bool {
 	// 		hasOurCallbackID = ok && block.BlockID == "matterbridge_"+b.uuid
 	// 	}
 	// }
-	// Skip any messages that we made ourselves or from 'slackbot' (see #527).
+	//Skip any messages that we made ourselves or from 'slackbot' (see #527).
+
 	// if ev.Username == sSlackBotUser ||
-	// 	(b.rtm != nil && ev.Username == b.si.User.Name) || hasOurCallbackID {
+	//(b.rtm != nil && ev.Username == b.si.User.Name) || hasOurCallbackID {
 	// 	return true
 	// }
+	// if ev.BotID != "" {
+	// 	return true
+	// }
+
+	// if ev.Username == sSlackBotUser || ev.Username == b.ui.Name || hasOurCallbackID {
+
 	// if len(ev.Files) > 0 {
 	// 	return b.filesCached2(ev.Files)
 	// }
+
+	//Retrieve user details
+	userInfo, err := b.sc.AuthTest()
+	if err != nil {
+		// Error retrieving user details
+		return false
+	}
+
+	b.Log.Debug("skipping own message", userInfo)
+
+	if ev.Username == sSlackBotUser || ev.User == userInfo.UserID || hasOurCallbackID {
+		return true
+	}
+
 	return false
 }
 
@@ -492,6 +542,7 @@ func (b *Bslack) handleMessageEvent2(ev *slackevents.MessageEvent) (*config.Mess
 // }
 
 func (b *Bslack) handleStatusEvent2(ev *slackevents.MessageEvent, rmsg *config.Message) bool {
+	// userIdentität slack api
 	if ev.SubType == "bot_message" {
 		b.Log.Debug("skipping own message")
 		return true // skip own message
