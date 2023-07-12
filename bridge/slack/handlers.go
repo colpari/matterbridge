@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"html"
 	"os"
+	"regexp"
+	"strings"
+
 	"time"
 
 	"github.com/42wim/matterbridge/bridge/config"
@@ -18,10 +21,6 @@ import (
 // ErrEventIgnored is for events that should be ignored
 var ErrEventIgnored = errors.New("this event message should ignored")
 
-// if ev.SubType == "bot_message" {
-// 	b.Log.Debug("skipping own message")
-// 	return true // skip own message
-// } else {
 func (b *Bslack) handleSlack() {
 	messages := make(chan *config.Message)
 	if b.GetString(incomingWebhookConfig) != "" && b.GetString(tokenConfig) == "" {
@@ -390,7 +389,7 @@ func (b *Bslack) skipMessageEvent2(ev *slackevents.MessageEvent) bool {
 		return false
 	}
 
-	b.Log.Debug("skipping own message", userInfo)
+	b.Log.Debug("skipping own message")
 
 	if ev.Username == sSlackBotUser || ev.User == userInfo.UserID || hasOurCallbackID {
 		return true
@@ -542,30 +541,24 @@ func (b *Bslack) handleMessageEvent2(ev *slackevents.MessageEvent) (*config.Mess
 // }
 
 func (b *Bslack) handleStatusEvent2(ev *slackevents.MessageEvent, rmsg *config.Message) bool {
-	// userIdentität slack api
-	if ev.SubType == "bot_message" {
-		b.Log.Debug("skipping own message")
-		return true // skip own message
-	} else {
-		switch ev.SubType {
-		case sMessageChanged:
-			rmsg.Text = ev.Message.Text
-			// handle deleted thread starting messages
-			if ev.Message.Text == "This message was deleted." {
-				rmsg.Event = config.EventMsgDelete
-				return true
-			}
-			rmsg.ID = ev.Message.TimeStamp
-		case sMessageDeleted:
-			rmsg.Text = config.EventMsgDelete
+	switch ev.SubType {
+	case sMessageChanged:
+		rmsg.Text = ev.Message.Text
+		// handle deleted thread starting messages
+		if ev.Message.Text == "This message was deleted." {
 			rmsg.Event = config.EventMsgDelete
-			rmsg.ID = ev.PreviousMessage.TimeStamp
-			// If a message is being deleted we do not need to process
-			// the event any further so we return 'true'.
 			return true
-		case sMeMessage:
-			rmsg.Event = config.EventUserAction
 		}
+		rmsg.ID = ev.Message.TimeStamp
+	case sMessageDeleted:
+		rmsg.Text = config.EventMsgDelete
+		rmsg.Event = config.EventMsgDelete
+		rmsg.ID = ev.PreviousMessage.TimeStamp
+		// If a message is being deleted we do not need to process
+		// the event any further so we return 'true'.
+		return true
+	case sMeMessage:
+		rmsg.Event = config.EventUserAction
 	}
 	return false
 }
@@ -621,8 +614,22 @@ func (b *Bslack) handleAttachments2(ev *slackevents.MessageEvent, rmsg *config.M
 		rmsg.Username = sSystemUser
 	}
 
-	// See if we have some text in the attachments.
-	if rmsg.Text == "" {
+	// Den regulären Ausdruck definieren
+	regex := regexp.MustCompile(`^#+`)
+
+	// Den String in Zeilen aufteilen
+	lines := strings.Split(rmsg.Text, "\n")
+
+	// Die Filterung und Umsetzung des Regex für jede Zeile durchführen
+	for i, line := range lines {
+		lines[i] = regex.ReplaceAllString(line, "\n")
+	}
+
+	// Den String wieder zusammensetzen
+	rmsg.Text = strings.Join(lines, "") + "\n"
+
+	// muss ersetzt werden durch \#
+	if rmsg.Text == "" || rmsg.Text != "" {
 		for i, attach := range ev.Attachments {
 			if attach.Text != "" {
 				if attach.Title != "" {
