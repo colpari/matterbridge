@@ -390,11 +390,14 @@ func (b *Bslack) skipMessageEvent2(ev *slackevents.MessageEvent) bool {
 	}
 
 	b.Log.Debug("skipping own message")
-
-	if ev.Username == sSlackBotUser || ev.User == userInfo.UserID || hasOurCallbackID {
+	// ev.Username == sSlackBotUser || ev.User == userInfo.UserID || (ev.Message.User == userInfo.UserID && SubType == "message_changed" || hasOurCallbackID
+	if ev.Username == sSlackBotUser || ev.User == userInfo.UserID || ev.Message != (ev.Message.User == userInfo.UserID && ev.SubType == "message_changed") || hasOurCallbackID {
 		return true
 	}
-
+	// if ev.SubType == "bot_message" {
+	// 	b.Log.Debug("skipping own message")
+	// 	return true // skip own message
+	// }
 	return false
 }
 

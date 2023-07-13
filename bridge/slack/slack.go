@@ -496,6 +496,45 @@ func (b *Bslack) sendSlackEventsAPI(msg config.Message) (string, error) {
 // 	return true, nil
 // }
 
+// func (b *Bslack) deleteMessage(msg *config.Message) (bool, error) {
+// 	if msg.Event != config.EventMsgDelete {
+// 		return false, nil
+// 	}
+
+// 	// Some protocols echo deletes, but with an empty ID.
+// 	if msg.ID == "" {
+// 		return true, nil
+// 	}
+
+// 	// 1. Lösche die Hauptnachricht
+// 	_, _, err := b.ssm.DeleteMessage(msg.Channel, msg.ID)
+// 	if err != nil {
+// 		// Fehlerbehandlung
+// 		return false, err
+// 	}
+// 	b.Log.Debugf("Timestamp ::", msg.Timestamp.Format(time.RFC3339))
+// 	// 2. Rufe die Antworten auf die gelöschte Nachricht ab
+// 	replies, _, _, err := b.sc.GetConversationReplies(&slack.GetConversationRepliesParameters{
+// 		ChannelID: msg.Channel,
+// 		Timestamp: msg.Timestamp.Format(time.RFC3339),
+// 	})
+// 	if err != nil {
+// 		// Fehlerbehandlung
+// 		return false, err
+// 	}
+
+// 	// 3. Lösche die einzelnen Antworten
+// 	for _, reply := range replies {
+// 		_, _, err := b.ssm.DeleteMessage(reply.Channel, reply.Timestamp)
+// 		if err != nil {
+// 			// Fehlerbehandlung
+// 			return false, err
+// 		}
+// 	}
+
+// 	return true, nil
+// }
+
 func (b *Bslack) deleteMessage(msg *config.Message) (bool, error) {
 	if msg.Event != config.EventMsgDelete {
 		return false, nil
@@ -507,7 +546,7 @@ func (b *Bslack) deleteMessage(msg *config.Message) (bool, error) {
 	}
 
 	for {
-		_, _, err := b.ssm.DeleteMessage(msg.Channel, msg.ID)
+		_, _, err := b.sc.DeleteMessage(msg.Channel, msg.ID)
 		if err == nil {
 			return true, nil
 		}
@@ -518,6 +557,56 @@ func (b *Bslack) deleteMessage(msg *config.Message) (bool, error) {
 		}
 	}
 }
+
+// func (b *Bslack) deleteReply(reply *config.Reply) (bool, error) {
+// 	if reply.Event != config.EventReplyDelete {
+// 		return false, nil
+// 	}
+
+// 	// Some protocols echo deletes, but with an empty ID.
+// 	if reply.ID == "" {
+// 		return true, nil
+// 	}
+
+// 	for {
+// 		_, _, err := b.ssm.DeleteMessage(reply.Channel, reply.ID)
+// 		if err == nil {
+// 			return true, nil
+// 		}
+
+// 		if err = handleRateLimit(b.Log, err); err != nil {
+// 			b.Log.Errorf("Failed to delete user reply from Slack: %#v", err)
+// 			return true, err
+// 		}
+// 	}
+// }
+
+// func (b *Bslack) deleteMessage(api *slack.Client, channel string, ts string) error {
+// 	// Löschen der Hauptnachricht
+// 	_, _, err := api.DeleteMessage(channel, ts)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	// Holen aller Antworten auf die Nachricht
+// 	replies, _, _, err := api.GetConversationReplies(&slack.GetConversationRepliesParameters{
+// 		ChannelID: channel,
+// 		Timestamp: ts,
+// 	})
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	// Löschen aller Antworten
+// 	for _, reply := range replies {
+// 		_, _, err := api.DeleteMessage(channel, reply.Timestamp)
+// 		if err != nil {
+// 			fmt.Printf("Failed to delete reply: %s\n", err)
+// 		}
+// 	}
+
+// 	return nil
+// }
 
 func (b *Bslack) editMessage(msg *config.Message) (bool, error) {
 	if msg.ID == "" {
