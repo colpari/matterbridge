@@ -63,6 +63,7 @@ const (
 	cfileDownloadChannel = "file_download_channel"
 
 	tokenConfig           = "Token"
+	tokenConfigApp        = "TokenAPP"
 	incomingWebhookConfig = "WebhookBindAddress"
 	outgoingWebhookConfig = "WebhookURL"
 	skipTLSConfig         = "SkipTLSVerify"
@@ -115,13 +116,9 @@ func (b *Bslack) Connect() error {
 	// If we have a token we use the Slack websocket-based RTM for both sending and receiving.
 	if token := b.GetString(tokenConfig); token != "" {
 		b.Log.Info("Connecting using token")
-		//userToken := "xoxp-432307700594-5253922647267-5407161992449-008973cd240f3a17e16b91b47fd1224d"
-		appToken := "xapp-1-A05CG7GG9MM-5436073309477-093ad4e2aada45dffb77c63f717216e35e13ee2c5f9aec450adc46ea9025d3d6"
-		botToken := "xoxb-432307700594-5451620874497-ck84KfSb3KsCAUM6RLBbQrNR"
-		//VERIFICATION_TOKEN := "bPd5QWgH5vADq8TutvmGP2D1"
-
+		appToken := b.GetString(tokenConfigApp)
 		b.sc = slack.New(
-			botToken,
+			token,
 			slack.OptionDebug(true),
 			slack.OptionLog(log.New(os.Stdout, "api: ", log.Lshortfile|log.LstdFlags)),
 			slack.OptionAppLevelToken(appToken),
