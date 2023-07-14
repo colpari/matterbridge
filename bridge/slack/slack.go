@@ -193,7 +193,7 @@ func (b *Bslack) Reload(cfg *bridge.Config) (string, error) {
 }
 
 func insertTags(input string) string {
-	re := regexp.MustCompile(`(@[A-Za-z0-9]{11})`)
+	re := regexp.MustCompile(`(@[A-Za-z0-9]{1,21})`)
 	output := re.ReplaceAllString(input, "<$1>")
 	return output
 }

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/42wim/matterbridge/bridge/config"
@@ -295,8 +297,22 @@ func (b *Bslack) handleAttachments(ev *slack.MessageEvent, rmsg *config.Message)
 		rmsg.Username = sSystemUser
 	}
 
+	// Den regulären Ausdruck definieren
+	regex := regexp.MustCompile(`^#+`)
+
+	// Den String in Zeilen aufteilen
+	lines := strings.Split(rmsg.Text, "\n")
+
+	// Die Filterung und Umsetzung des Regex für jede Zeile durchführen
+	for i, line := range lines {
+		lines[i] = regex.ReplaceAllString(line, "\n")
+	}
+
+	// Den String wieder zusammensetzen
+	rmsg.Text = strings.Join(lines, "") + "\n"
+
 	// See if we have some text in the attachments.
-	if rmsg.Text == "" {
+	if rmsg.Text == "" || rmsg.Text != "" {
 		for i, attach := range ev.Attachments {
 			if attach.Text != "" {
 				if attach.Title != "" {
