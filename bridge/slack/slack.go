@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/42wim/matterbridge/bridge"
 	"github.com/42wim/matterbridge/bridge/config"
@@ -312,73 +311,6 @@ func (b *Bslack) sendWebhook(msg config.Message) error {
 	return nil
 }
 
-// ------------------------------------------------------------- now changed ------------------------------
-// diese funktion muss angepasst werden
-// func (b *Bslack) sendRTM(msg config.Message) (string, error) {
-// 	// Handle channelmember messages.
-// 	if handled := b.handleGetChannelMembers(&msg); handled {
-// 		return "", nil
-// 	}
-
-// 	channelInfo, err := b.channels.getChannel(msg.Channel)
-// 	if err != nil {
-// 		return "", fmt.Errorf("could not send message: %v", err)
-// 	}
-// 	if msg.Event == config.EventUserTyping {
-// 		if b.GetBool("ShowUserTyping") {
-// 			b.rtm.SendMessage(b.rtm.NewTypingMessage(channelInfo.ID))
-// 		}
-// 		return "", nil
-// 	}
-
-// 	var handled bool
-
-// 	// Handle topic/purpose updates.
-// 	if handled, err = b.handleTopicOrPurpose(&msg, channelInfo); handled {
-// 		return "", err
-// 	}
-
-// 	// Handle prefix hint for unthreaded messages.
-// 	if msg.ParentNotFound() {
-// 		msg.ParentID = ""
-// 		msg.Text = fmt.Sprintf("[thread]: %s", msg.Text)
-// 	}
-
-// 	// Handle message deletions.
-// 	if handled, err = b.deleteMessage(&msg, channelInfo); handled {
-// 		return msg.ID, err
-// 	}
-
-// 	// Prepend nickname if configured.
-// 	if b.GetBool(useNickPrefixConfig) {
-// 		msg.Text = msg.Username + msg.Text
-// 	}
-
-// 	// Handle message edits.
-// 	if handled, err = b.editMessage(&msg, channelInfo); handled {
-// 		return msg.ID, err
-// 	}
-
-// 	// Upload a file if it exists.
-// 	if len(msg.Extra) > 0 {
-// 		extraMsgs := helper.HandleExtra(&msg, b.General)
-// 		for i := range extraMsgs {
-// 			rmsg := &extraMsgs[i]
-// 			rmsg.Text = rmsg.Username + rmsg.Text
-// 			_, err = b.postMessage(rmsg, channelInfo)
-// 			if err != nil {
-// 				b.Log.Error(err)
-// 			}
-// 		}
-// 		// Upload files if necessary (from Slack, Telegram or Mattermost).
-// 		return b.uploadFile(&msg, channelInfo.ID)
-// 	}
-
-// 	// Post message.
-// 	return b.postMessage(&msg, channelInfo)
-
-// }
-
 // Diese Funktion muss angepasst werden
 func (b *Bslack) sendSlackEventsAPI(msg config.Message) (string, error) {
 	// Handle channelmember messages.
@@ -642,54 +574,268 @@ func (b *Bslack) postMessage(msg *config.Message) (string, error) {
 	}
 }
 
-// uploadFile handles native upload of files
+//uploadFile handles native upload of files
+// func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
+// 	var messageID string
+
+// 	for _, f := range msg.Extra["file"] {
+// 		fi, ok := f.(config.FileInfo)
+// 		if !ok {
+// 			b.Log.Errorf("Received a file with unexpected content: %#v", f)
+// 			continue
+// 		}
+// 		//formatierterTextFile := insertTags(fi.Comment)
+// 		if msg.Text == fi.Comment {
+// 			msg.Text = ""
+// 		}
+// 		// Because the result of the UploadFile is slower than the MessageEvent from slack
+// 		// we can't match on the file ID yet, so we have to match on the filename too.
+// 		ts := time.Now()
+// 		b.Log.Debugf("Adding file %s to cache at %s with timestamp", fi.Name, ts.String())
+// 		b.cache.Add("filename"+fi.Name, ts)
+// 		// initialComment := fmt.Sprintf("File from %s", msg.Username)
+// 		// if fi.Comment != "" {
+// 		// 	initialComment += fmt.Sprintf(" with comment: %s", fi.Comment)
+// 		// }
+// 		res, err := b.sc.UploadFile(slack.FileUploadParameters{
+// 			Reader:   bytes.NewReader(*fi.Data),
+// 			Filename: fi.Name,
+// 			Channels: []string{channelID},
+// 			//InitialComment:  formatierterTextFile,
+// 			ThreadTimestamp: msg.ParentID,
+// 		})
+// 		if err != nil {
+// 			b.Log.Errorf("uploadfile %#v", err)
+// 			return "", err
+// 		}
+// 		if res.ID != "" {
+// 			b.Log.Debugf("Adding file ID %s to cache with timestamp %s", res.ID, ts.String())
+// 			b.cache.Add("file"+res.ID, ts)
+
+// 			// search for message id by uploaded file in private/public channels, get thread timestamp from uploaded file
+// 			if v, ok := res.Shares.Private[channelID]; ok && len(v) > 0 {
+// 				messageID = v[0].Ts
+// 			}
+// 			if v, ok := res.Shares.Public[channelID]; ok && len(v) > 0 {
+// 				messageID = v[0].Ts
+// 			}
+// 		}
+// 	}
+// 	return messageID, nil
+// }
+// func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
+// 	var messageID string
+
+// 	var files []config.FileInfo
+// 	var fileLinks []string
+
+// 	for _, f := range msg.Extra["file"] {
+// 		fi, ok := f.(config.FileInfo)
+// 		if !ok {
+// 			b.Log.Errorf("Received a file with unexpected content: %#v", f)
+// 			continue
+// 		}
+
+// 		files = append(files, fi)
+// 	}
+
+// 	for _, file := range files {
+// 		res, err := b.sc.UploadFile(slack.FileUploadParameters{
+// 			Reader:          bytes.NewReader(*file.Data),
+// 			Filename:        file.Name,
+// 			Channels:        []string{channelID},
+// 			ThreadTimestamp: msg.ParentID,
+// 		})
+// 		if err != nil {
+// 			b.Log.Errorf("uploadfile %#v", err)
+// 			return "", err
+// 		}
+
+// 		if res.ID != "" {
+// 			ts := time.Now()
+// 			b.Log.Debugf("Adding file ID %s to cache with timestamp %s", res.ID, ts.String())
+// 			b.cache.Add("file"+res.ID, ts)
+
+// 			// search for message id by uploaded file in private/public channels, get thread timestamp from uploaded file
+// 			if v, ok := res.Shares.Private[channelID]; ok && len(v) > 0 {
+// 				messageID = v[0].Ts
+// 			}
+// 			if v, ok := res.Shares.Public[channelID]; ok && len(v) > 0 {
+// 				messageID = v[0].Ts
+// 			}
+
+// 			fileLinks = append(fileLinks, res.URLPrivate)
+// 		}
+// 	}
+
+// 	if len(fileLinks) > 0 {
+// 		// Erstellen der Nachricht mit den Dateilinks
+// 		fileList := strings.Join(fileLinks, "\n")
+// 		msg.Text += "\nAttached Files:\n" + fileList
+
+// 		// Hier den Code einfügen, um die Nachricht zu senden
+// 		// ...
+
+// 	}
+
+// 	return messageID, nil
+// }
+
+// func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
+// 	// Sende die Nachricht und erhalte die Nachrichten-ID
+// 	_, respTimestamp, err := b.sc.PostMessage(channelID, slack.MsgOptionText(msg.Text, false))
+// 	if err != nil {
+// 		b.Log.Errorf("Fehler beim Senden der Nachricht: %#v", err)
+// 		return "", err
+// 	}
+
+// 	// Hänge die Dateien an den ursprünglichen Post an
+// 	for _, f := range msg.Extra["file"] {
+// 		fi, ok := f.(config.FileInfo)
+// 		if !ok {
+// 			b.Log.Errorf("Empfangene Datei mit unerwartetem Inhalt: %#v", f)
+// 			continue
+// 		}
+
+// 		ts := time.Now()
+// 		b.Log.Debugf("Füge Datei %s zum Cache hinzu mit Zeitstempel %s", fi.Name, ts.String())
+// 		b.cache.Add("filename"+fi.Name, ts)
+
+// 		_, err := b.sc.UploadFile(slack.FileUploadParameters{
+// 			Reader:          bytes.NewReader(*fi.Data),
+// 			Filename:        fi.Name,
+// 			Channels:        []string{channelID},
+// 			ThreadTimestamp: respTimestamp, // Verwende die Nachrichten-ID des ursprünglichen Posts
+// 		})
+// 		if err != nil {
+// 			b.Log.Errorf("Fehler beim Hochladen der Datei: %#v", err)
+// 			return "", err
+// 		}
+// 	}
+
+// 	return respTimestamp, nil
+// }
+
 func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
-	var messageID string
+	// Sende die Nachricht und erhalte die Nachrichten-ID
+	_, respTimestamp, err := b.sc.PostMessage(channelID, slack.MsgOptionText(msg.Text, false))
+	if err != nil {
+		b.Log.Errorf("Fehler beim Senden der Nachricht: %#v", err)
+		return "", err
+	}
+
+	// Upload the image to Slack
+	var imageID string
 	for _, f := range msg.Extra["file"] {
 		fi, ok := f.(config.FileInfo)
 		if !ok {
-			b.Log.Errorf("Received a file with unexpected content: %#v", f)
+			b.Log.Errorf("Empfangene Datei mit unerwartetem Inhalt: %#v", f)
 			continue
 		}
-		formatierterTextFile := insertTags(fi.Comment)
-		if msg.Text == fi.Comment {
-			msg.Text = ""
+
+		params := slack.FileUploadParameters{
+			Reader:   bytes.NewReader(*fi.Data),
+			Filename: fi.Name,
 		}
-		// Because the result of the UploadFile is slower than the MessageEvent from slack
-		// we can't match on the file ID yet, so we have to match on the filename too.
-		ts := time.Now()
-		b.Log.Debugf("Adding file %s to cache at %s with timestamp", fi.Name, ts.String())
-		b.cache.Add("filename"+fi.Name, ts)
-		// initialComment := fmt.Sprintf("File from %s", msg.Username)
-		// if fi.Comment != "" {
-		// 	initialComment += fmt.Sprintf(" with comment: %s", fi.Comment)
-		// }
-		res, err := b.sc.UploadFile(slack.FileUploadParameters{
-			Reader:          bytes.NewReader(*fi.Data),
-			Filename:        fi.Name,
-			Channels:        []string{channelID},
-			InitialComment:  formatierterTextFile,
-			ThreadTimestamp: msg.ParentID,
-		})
+
+		// Step 1: Upload the image to Slack
+		file, err := b.sc.UploadFile(params)
 		if err != nil {
-			b.Log.Errorf("uploadfile %#v", err)
+			b.Log.Errorf("Fehler beim Hochladen der Datei: %#v", err)
 			return "", err
 		}
-		if res.ID != "" {
-			b.Log.Debugf("Adding file ID %s to cache with timestamp %s", res.ID, ts.String())
-			b.cache.Add("file"+res.ID, ts)
+		// response, err := b.sc.GetFilesSharedPublicURL(fileID)
+		// if err != nil {
+		// 	return "", err
+		// }
 
-			// search for message id by uploaded file in private/public channels, get thread timestamp from uploaded file
-			if v, ok := res.Shares.Private[channelID]; ok && len(v) > 0 {
-				messageID = v[0].Ts
-			}
-			if v, ok := res.Shares.Public[channelID]; ok && len(v) > 0 {
-				messageID = v[0].Ts
-			}
+		imageID = file.ID
+
+		// extract the pub_secret from permalink_public
+		// linkPartsPermalinkPublic := strings.Split(file.PermalinkPublic, "-")
+		// pubSecret := linkPartsPermalinkPublic[3]
+
+		teamInfo, err := b.sc.GetTeamInfo()
+		if err != nil {
+			// Handle the error
+			return "", err
+		}
+
+		teamID := teamInfo.ID
+
+		// Step 2: Create a public URL
+		// _, _, publicURL, err := b.sc.GetFileInfo(file.ID, 0, 0)
+		// if err != nil {
+		// 	b.Log.Errorf("Fehler beim Abrufen der Ã¶ffentlichen URL: %#v", err)
+		// 	return "", err
+		// }
+
+		// Step 3: Construct the direct image link
+		imageURL := fmt.Sprintf("https://files.slack.com/files-pri/%s-%s/%s?", teamID, imageID, fi.Name)
+
+		// Erstelle das title-Objekt vom Typ TextBlockObject
+		titleText := msg.Text
+		title := slack.NewTextBlockObject(slack.PlainTextType, titleText, false, false)
+
+		// Create an image block with the imageURL
+		imageBlock := slack.NewImageBlock(imageURL, "Image", "", title)
+
+		// Send the message with the image block
+		_, respTimestamp, err = b.sc.PostMessage(channelID, slack.MsgOptionBlocks(imageBlock))
+		if err != nil {
+			b.Log.Errorf("Fehler beim Senden der Nachricht mit dem Bild: %#v", err)
+			return "", err
 		}
 	}
-	return messageID, nil
+
+	return respTimestamp, nil
 }
+
+// uploadFile handles native upload of files
+// func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
+// 	var messageID string
+
+// 	// Sende die Nachricht und erhalte die Nachrichten-ID
+// 	respChannel, respTimestamp, err := b.sc.PostMessage(channelID, slack.MsgOptionText(msg.Text, false))
+// 	if err != nil {
+// 		b.Log.Errorf("Fehler beim Senden der Nachricht: %#v", err)
+// 		return "", err
+// 	}
+// 	if respChannel != "" {
+// 		messageID = respTimestamp
+// 	}
+
+// 	// Hänge die Dateien als Anhänge zum Hauptpost an
+// 	for _, f := range msg.Extra["file"] {
+// 		fi, ok := f.(config.FileInfo)
+// 		if !ok {
+// 			b.Log.Errorf("Empfangene Datei mit unerwartetem Inhalt: %#v", f)
+// 			continue
+// 		}
+
+// 		ts := time.Now()
+// 		b.Log.Debugf("Füge Datei %s zum Cache hinzu mit Zeitstempel %s", fi.Name, ts.String())
+// 		b.cache.Add("filename"+fi.Name, ts)
+
+// 		_, err := b.sc.UploadFile(slack.FileUploadParameters{
+// 			Reader:          bytes.NewReader(*fi.Data),
+// 			Filename:        fi.Name,
+// 			Channels:        []string{channelID},
+// 			ThreadTimestamp: messageID, // Verwende die Nachrichten-ID als Thread-Timestamp
+// 		})
+// 		if err != nil {
+// 			b.Log.Errorf("Fehler beim Hochladen der Datei: %#v", err)
+// 			return "", err
+// 		}
+
+// 		// Alternative: Datei-IDs als separate Nachrichten speichern
+// 		// fileID := res.ID
+// 		// b.Log.Debugf("Füge Datei-ID %s zum Cache hinzu mit Zeitstempel %s", fileID, ts.String())
+// 		// b.cache.Add("file"+fileID, ts)
+// 	}
+
+// 	return messageID, nil
+// }
 
 func (b *Bslack) prepareMessageOptions(msg *config.Message) []slack.MsgOption {
 	params := slack.NewPostMessageParameters()
