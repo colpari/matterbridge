@@ -352,7 +352,7 @@ func (b *Bslack) sendSlackEventsAPI(msg config.Message) (string, error) {
 
 	// Prepend nickname if configured.
 	if b.GetBool(useNickPrefixConfig) {
-		msg.Text = msg.Username + msg.Text
+		msg.Text = fmt.Sprintf("*[ %s ]*\n%s", msg.Username, msg.Text)
 	}
 
 	// Handle message edits.
