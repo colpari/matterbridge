@@ -8,8 +8,7 @@ import (
 
 	"github.com/42wim/matterbridge/bridge/config"
 	"github.com/42wim/matterbridge/bridge/helper"
-
-	msgraph "github.com/yaegashi/msgraph.go/beta"
+	//msgraph "github.com/yaegashi/msgraph.go/beta"
 )
 
 func (b *Bmsteams) findFile(weburl string) (string, error) {
@@ -50,7 +49,7 @@ func (b *Bmsteams) handleDownloadFile(rmsg *config.Message, filename, weburl str
 	return nil
 }
 
-func (b *Bmsteams) handleAttachments(rmsg *config.Message, msg msgraph.ChatMessage) {
+func (b *Bmsteams) handleAttachments(rmsg *config.Message, msg msgraph.ChatMessage) { // ->   yaegashi-Bibliothek
 	for _, a := range msg.Attachments {
 		//remove the attachment tags from the text
 		rmsg.Text = attachRE.ReplaceAllString(rmsg.Text, "")
@@ -74,7 +73,7 @@ type AttachContent struct {
 	CodeSnippetURL string `json:"codeSnippetUrl"`
 }
 
-func (b *Bmsteams) handleCodeSnippet(rmsg *config.Message, attach msgraph.ChatMessageAttachment) {
+func (b *Bmsteams) handleCodeSnippet(rmsg *config.Message, attach msgraph.ChatMessageAttachment) { // ->   yaegashi-Bibliothek
 	var content AttachContent
 	err := json.Unmarshal([]byte(*attach.Content), &content)
 	if err != nil {
