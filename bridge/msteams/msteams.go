@@ -18,13 +18,12 @@ import (
 	"github.com/42wim/matterbridge/bridge"
 	"github.com/42wim/matterbridge/bridge/config"
 	"github.com/davecgh/go-spew/spew"
+	"github.com/mattn/godown"
 
 	azidentity "github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	msgraphsdk "github.com/microsoftgraph/msgraph-sdk-go"
 	graphmodels "github.com/microsoftgraph/msgraph-sdk-go/models"
 	graphteams "github.com/microsoftgraph/msgraph-sdk-go/teams"
-
-	"github.com/mattn/godown"
 	//msgraph "github.com/yaegashi/msgraph.go/beta"
 	//"github.com/yaegashi/msgraph.go/msauth"
 )
@@ -35,8 +34,8 @@ für den Microsoft Graph-API-Zugriff und ein regulärer Ausdruck, der verwendet 
 um Anhänge aus einer Zeichenfolge zu entfernen, indem er nach einem bestimmten Muster sucht.
 */
 var (
-	defaultScopes = []string{"openid", "profile", "offline_access", "Group.Read.All", "Group.ReadWrite.All", "ChannelMessage.ReadWrite"}
-	attachRE      = regexp.MustCompile(`<attachment id=.*?attachment>`)
+	//defaultScopes = []string{"openid", "profile", "offline_access", "ChannelMessage.Read.Group,", "ChannelMessage.Read.All", "ChannelMessage.ReadWrite", "https://graph.microsoft.com/.default"}
+	attachRE = regexp.MustCompile(`<attachment id=.*?attachment>`)
 )
 
 /*
@@ -53,9 +52,10 @@ innerhalb einer Matterbridge-Brücke bereitstellt.
 // }
 
 type Bmsteams struct {
-	gc    *msgraphsdk.GraphServiceClient // -> offizielle Microsoft Graph API
-	ctx   context.Context
-	botID string
+	gc             *msgraphsdk.GraphServiceClient // -> offizielle Microsoft Graph API
+	ctx            context.Context
+	CurrentMessage config.Message
+	botID          string
 	*bridge.Config
 	idsForDelMap map[string]string
 }
@@ -115,28 +115,41 @@ func (b *Bmsteams) Connect() error {
 	ctx := context.Background()
 
 	clientID := b.GetString("ClientID")
-	clientSecret := b.GetString("ClientSecret")
+	//clientSecret := b.GetString("ClientSecret")
 	tenantID := b.GetString("TenantID")
-	scopes := defaultScopes
-	//scopes := []string{"https://graph.microsoft.com/.default"},
+	//scopes := defaultScopes
+	//scopes := []string{"ChannelMessage.Read.All/.default"}
 
-	cred, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create client secret credential: %v", err)
-	}
+	// cred, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to create client secret credential: %v", err)
+	// }
 
-	graphClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(cred, scopes)
-	if err != nil {
-		return fmt.Errorf("failed to create Graph Service Client: %v", err)
-	}
+	cred, _ := azidentity.NewDeviceCodeCredential(&azidentity.DeviceCodeCredentialOptions{
+		TenantID: tenantID,
+		ClientID: clientID,
+		UserPrompt: func(ctx context.Context, message azidentity.DeviceCodeMessage) error {
+			fmt.Println(message.Message)
+			return nil
+		},
+	})
+
+	// graphClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(cred, scopes)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to create Graph Service Client: %v", err)
+	// }
+
+	graphClient, _ := msgraphsdk.NewGraphServiceClientWithCredentials(
+		cred, []string{"ChannelMessage.Read.All"})
 
 	b.gc = graphClient
 	b.ctx = ctx
 
-	err = b.setBotID()
-	if err != nil {
-		return err
-	}
+	// err = b.setBotID()
+	// if err != nil {
+	// 	b.Log.Error("Error setting Bot ID:", err)
+	// 	return err
+	// }
 
 	b.Log.Info("Connection succeeded")
 	return nil
@@ -364,7 +377,7 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 			}
 			requestBody.SetMentions(mentions)
 
-			mentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(context.Background(), requestBody, nil)
+			mentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, requestBody, nil)
 			//mentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(context.Background(), requestBody, nil)
 			if err != nil {
 				return err.Error()
@@ -394,7 +407,7 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 			}
 			requestBody.SetMentions(mentions)
 
-			mentionContentAll, err := b.gc.Teams().ByTeamId("team-id").Channels().ByChannelId("channel-id").Messages().Post(context.Background(), requestBody, nil)
+			mentionContentAll, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, requestBody, nil)
 			if err != nil {
 				return err.Error()
 			}
@@ -443,7 +456,7 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 					chatMessageHostedContent,
 				}
 				requestBody.SetHostedContents(hostedContents)
-				hostedContentPost, err := b.gc.Chats().ByChatId("chat-id").Messages().Post(context.Background(), requestBody, nil)
+				hostedContentPost, err := b.gc.Chats().ByChatId(msg.ID).Messages().Post(b.ctx, requestBody, nil)
 				if err != nil {
 					return "", err
 				}
@@ -482,14 +495,14 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 	//cte := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ID).Request()
 
 	if msg.ID != "" {
-		_, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(context.Background(), requestBody, nil)
+		_, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, requestBody, nil)
 		//err := cte.JSONRequest(b.ctx, "PATCH", "?model=A", rmsg, nil)
 		if err != nil {
 			return "", err
 		}
 		return msg.ID, err
 	} else {
-		res, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Patch(context.Background(), requestBody, nil)
+		res, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Patch(b.ctx, requestBody, nil)
 		if err != nil {
 			return "", err
 		}
@@ -548,7 +561,7 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 			}
 			replyRequestBody.SetMentions(mentions)
 
-			replyMentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(context.Background(), replyRequestBody, nil)
+			replyMentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, replyRequestBody, nil)
 			//mentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(context.Background(), requestBody, nil)
 			if err != nil {
 				return err.Error()
@@ -578,7 +591,7 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 			}
 			replyRequestBody.SetMentions(mentions)
 
-			mentionContentAll, err := b.gc.Teams().ByTeamId("team-id").Channels().ByChannelId("channel-id").Messages().Post(context.Background(), replyRequestBody, nil)
+			mentionContentAll, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, replyRequestBody, nil)
 			if err != nil {
 				return err.Error()
 			}
@@ -625,7 +638,7 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 					chatMessageHostedContent,
 				}
 				requestBody.SetHostedContents(hostedContents)
-				hostedContentPost, err := b.gc.Chats().ByChatId("chat-id").Messages().Post(context.Background(), requestBody, nil)
+				hostedContentPost, err := b.gc.Chats().ByChatId(msg.ID).Messages().Post(context.Background(), requestBody, nil)
 				if err != nil {
 					return "", err
 				}
@@ -654,14 +667,14 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 
 	if msg.ID != "" {
 		requestBody := graphmodels.NewChatMessage()
-		_, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Replies().Post(context.Background(), requestBody, nil)
+		_, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Replies().Post(b.ctx, requestBody, nil)
 		if err != nil {
 			return "", err
 		}
 		return msg.ParentID, err
 	} else {
 		requestBody := graphmodels.NewChatMessage()
-		res, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Replies().ByChatMessageId1(msg.ID).Patch(context.Background(), requestBody, nil)
+		res, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Replies().ByChatMessageId1(msg.ID).Patch(b.ctx, requestBody, nil)
 		if err != nil {
 			return "", err
 		}
@@ -671,22 +684,24 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 
 }
 
-func (b *Bmsteams) getMessages(channel string) ([]graphmodels.ChatMessageable, error) { // ->   yaegashi-Bibliothek
-	//ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(channel).Messages().Request()
-	requestTop := int32(3)
-
-	requestParameters := &graphteams.TeamItemChannelItemMessagesRequestBuilderGetQueryParameters{
-		Top: &requestTop,
+func (b *Bmsteams) getMessages(channel string) (graphmodels.ChatMessageCollectionResponseable, error) {
+	requestTop := int32(1)
+	channelID := b.CurrentMessage.Channel
+	requestParameters := &graphteams.ItemChannelsItemMessagesRequestBuilderGetQueryParameters{
+		Top:    &requestTop,
+		Expand: []string{"replies"},
 	}
-	configuration := &graphteams.TeamItemChannelItemMessagesRequestBuilderGetRequestConfiguration{
+	configuration := &graphteams.ItemChannelsItemMessagesRequestBuilderGetRequestConfiguration{
 		QueryParameters: requestParameters,
 	}
 
-	getMessages, err := b.gc.Teams().ByTeamId("team-id").Channels().ByChannelId("channel-id").Messages().ByChatMessageId("chatMessage-id").Get(context.Background(), nil)
+	messages, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(channelID).Messages().Get(b.ctx, configuration)
+
 	if err != nil {
 		return nil, err
 	}
-	return getMessages, nil
+	return messages, nil
+
 }
 
 // Verwalten von toplevel map das verwalten der map (finde nachricht, prüfe Zeitstemple von Nachricht, füge Nachrichte ein)
@@ -783,7 +798,7 @@ func (b *Bmsteams) poll(channelName string) error {
 		return err
 	}
 
-	for _, msgToplevel := range res {
+	for _, msgToplevel := range res.GetValue() {
 		msgToplevelInfo := msgmap[*msgToplevel.GetId()]
 		//msgToplevelInfo.mTime = *msgToplevel.CreatedDateTime  should be done by updateMsgToplevel below
 		updateMsgToplevel(msgToplevel, &msgToplevelInfo)
@@ -802,8 +817,8 @@ func (b *Bmsteams) poll(channelName string) error {
 			return err
 		}
 		// check top level messages from oldest to newest
-		for i := len(res) - 1; i >= 0; i-- {
-			msg := res[i]
+		for i := len(res.GetValue()) - 1; i >= 0; i-- {
+			msg := res.GetValue()[i]
 			//b.Log.Debugf("\n\n<= toplevel is ID %s", *msg.ID)
 			if msgInfo, ok := msgmap[*msg.GetId()]; ok {
 				for _, reply := range msg.GetReplies() {
@@ -900,7 +915,7 @@ func (b *Bmsteams) poll(channelName string) error {
 				}
 
 				msgInfo := teamsMessageInfo{mTime: *msgTime(msg), replies: make(map[string]time.Time)}
-				msgmap[*msg.GetId()] = msgInfo
+				msgmap[*msg.GetId()] = msgInfo // ---------------------> Hier
 
 				if b.skipOwnMessage(msg) {
 					continue
@@ -955,15 +970,57 @@ func (b *Bmsteams) poll(channelName string) error {
 	}
 }
 
+// func (b *Bmsteams) setBotID() error {
+// 	req := b.gc.Me().Request()
+// 	r, err := req.Get(b.ctx)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	b.botID = *r.ID
+// 	return nil
+// }
+
 func (b *Bmsteams) setBotID() error {
-	req := b.gc.Me().Request()
-	r, err := req.Get(b.ctx)
-	if err != nil {
-		return err
-	}
-	b.botID = *r.ID
+	// Die gc ist eine Instanz von *msgraph.GraphServiceClient
+	//user, err := b.gc.Me().Get(context.Background(), nil)
+	// if err != nil {
+	// 	b.Log.Error("Error setting Bot ID:", err)
+	// 	return err
+	// }
+	b.botID = ""
 	return nil
 }
+
+// func (b *Bmsteams) setBotID() error {
+// 	//result, err := b.gc.Me().Drive().Get(context.Background(), nil)
+// 	result, err := b.gc.Me().Get(context.Background(), nil)
+// 	if err != nil {
+// 		fmt.Printf("Error getting the drive: %v\n", err)
+// 		printOdataError(err)
+// 	}
+
+// 	if result != nil && result.GetId() != nil {
+// 		fmt.Printf("Found Drive : %v\n", *result.GetId())
+// 	} else {
+// 		fmt.Println("Result or ID is nil")
+// 	}
+
+// 	return nil
+// }
+
+// // omitted for brevity
+// func printOdataError(err error) {
+// 	switch err.(type) {
+// 	case *odataerrors.ODataError:
+// 		typed := err.(*odataerrors.ODataError)
+// 		fmt.Printf("error:", typed.Error())
+// 		fmt.Printf("code: %v", &typed.Message)
+// 		fmt.Printf("msg: %d", &typed.ResponseStatusCode)
+
+// 	default:
+// 		fmt.Printf("%T > error: %#v", err, err)
+// 	}
+// }
 
 // ->   yaegashi-Bibliothek func
 func (b *Bmsteams) converMentionsAndRemoveHTML(msg graphmodels.ChatMessageable) string {
@@ -991,6 +1048,7 @@ func (b *Bmsteams) converMentionsAndRemoveHTML(msg graphmodels.ChatMessageable) 
 		getIDInt := int32(getIDIntTemp)
 		if err != nil {
 			// Fehlerbehandlung
+			return ""
 		}
 
 		if err != nil {
