@@ -149,14 +149,14 @@ func (b *Bmattermost) Send(msg config.Message) (string, error) {
 		return msg.ID, b.mc.DeleteMessage(msg.ID)
 	}
 
-	// React to Message
-	if msg.Event == config.EventReaction {
-		if msg.ParentID == "" {
-			return "", nil
-		}
+	// // React to Message
+	// if msg.Event == config.EventReaction {
+	// 	if msg.ParentID == "" {
+	// 		return "", nil
+	// 	}
 
-		return b.mc.ReactToMessage(msg.ParentID, msg.Text)
-	}
+	// 	return b.mc.ReactToMessage(msg.ParentID, msg.Text)
+	// }
 
 	// Handle prefix hint for unthreaded messages.
 	if msg.ParentNotFound() {
