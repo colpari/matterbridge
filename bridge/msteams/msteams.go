@@ -115,41 +115,41 @@ func (b *Bmsteams) Connect() error {
 	ctx := context.Background()
 
 	clientID := b.GetString("ClientID")
-	//clientSecret := b.GetString("ClientSecret")
+	clientSecret := b.GetString("ClientSecret")
 	tenantID := b.GetString("TenantID")
 	//scopes := defaultScopes
-	//scopes := []string{"ChannelMessage.Read.All/.default"}
+	scopes := []string{"https://graph.microsoft.com/.default"}
 
-	// cred, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to create client secret credential: %v", err)
-	// }
+	cred, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create client secret credential: %v", err)
+	}
 
-	cred, _ := azidentity.NewDeviceCodeCredential(&azidentity.DeviceCodeCredentialOptions{
-		TenantID: tenantID,
-		ClientID: clientID,
-		UserPrompt: func(ctx context.Context, message azidentity.DeviceCodeMessage) error {
-			fmt.Println(message.Message)
-			return nil
-		},
-	})
+	// cred, _ := azidentity.NewDeviceCodeCredential(&azidentity.DeviceCodeCredentialOptions{
+	// 	TenantID: tenantID,
+	// 	ClientID: clientID,
+	// 	UserPrompt: func(ctx context.Context, message azidentity.DeviceCodeMessage) error {
+	// 		fmt.Println(message.Message)
+	// 		return nil
+	// 	},
+	// })
 
-	// graphClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(cred, scopes)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to create Graph Service Client: %v", err)
-	// }
+	graphClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(cred, scopes)
+	if err != nil {
+		return fmt.Errorf("failed to create Graph Service Client: %v", err)
+	}
 
-	graphClient, _ := msgraphsdk.NewGraphServiceClientWithCredentials(
-		cred, []string{"ChannelMessage.Read.All"})
+	// graphClient, _ := msgraphsdk.NewGraphServiceClientWithCredentials(
+	// 	cred, []string{"ChannelMessage.Read.All"})
 
 	b.gc = graphClient
 	b.ctx = ctx
 
-	// err = b.setBotID()
-	// if err != nil {
-	// 	b.Log.Error("Error setting Bot ID:", err)
-	// 	return err
-	// }
+	err = b.setBotID()
+	if err != nil {
+		b.Log.Error("Error setting Bot ID:", err)
+		return err
+	}
 
 	b.Log.Info("Connection succeeded")
 	return nil
@@ -685,17 +685,17 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 }
 
 func (b *Bmsteams) getMessages(channel string) (graphmodels.ChatMessageCollectionResponseable, error) {
-	requestTop := int32(1)
-	channelID := b.CurrentMessage.Channel
+	//requestTop := int32(1)
+	//channelID := b.CurrentMessage.Channel
 	requestParameters := &graphteams.ItemChannelsItemMessagesRequestBuilderGetQueryParameters{
-		Top:    &requestTop,
-		Expand: []string{"replies"},
+		//Top: &requestTop,
+		Expand: []string{"replies"}, // fm kommt weil es keine relies prop da ist
 	}
 	configuration := &graphteams.ItemChannelsItemMessagesRequestBuilderGetRequestConfiguration{
 		QueryParameters: requestParameters,
 	}
 
-	messages, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(channelID).Messages().Get(b.ctx, configuration)
+	messages, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(channel).Messages().Get(b.ctx, configuration)
 
 	if err != nil {
 		return nil, err
