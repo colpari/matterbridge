@@ -115,32 +115,36 @@ func (b *Bmsteams) Connect() error {
 	ctx := context.Background()
 
 	clientID := b.GetString("ClientID")
-	clientSecret := b.GetString("ClientSecret")
+	//clientSecret := b.GetString("ClientSecret")
 	tenantID := b.GetString("TenantID")
 	//scopes := defaultScopes
-	scopes := []string{"https://graph.microsoft.com/.default"}
+	//scopes := []string{"https://graph.microsoft.com/.default"}
 
-	cred, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
+	// cred, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to create client secret credential: %v", err)
+	// }
+
+	cred, _ := azidentity.NewDeviceCodeCredential(&azidentity.DeviceCodeCredentialOptions{
+		TenantID: tenantID,
+		ClientID: clientID,
+		UserPrompt: func(ctx context.Context, message azidentity.DeviceCodeMessage) error {
+			fmt.Println(message.Message)
+			return nil
+		},
+	})
+
+	// graphClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(cred, scopes)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to create Graph Service Client: %v", err)
+	// }
+
+	graphClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(
+		cred, []string{"ChannelMessage.Read.All"})
 	if err != nil {
-		return fmt.Errorf("failed to create client secret credential: %v", err)
+		b.Log.Error("Error creating graphClient:", err)
+		return err
 	}
-
-	// cred, _ := azidentity.NewDeviceCodeCredential(&azidentity.DeviceCodeCredentialOptions{
-	// 	TenantID: tenantID,
-	// 	ClientID: clientID,
-	// 	UserPrompt: func(ctx context.Context, message azidentity.DeviceCodeMessage) error {
-	// 		fmt.Println(message.Message)
-	// 		return nil
-	// 	},
-	// })
-
-	graphClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(cred, scopes)
-	if err != nil {
-		return fmt.Errorf("failed to create Graph Service Client: %v", err)
-	}
-
-	// graphClient, _ := msgraphsdk.NewGraphServiceClientWithCredentials(
-	// 	cred, []string{"ChannelMessage.Read.All"})
 
 	b.gc = graphClient
 	b.ctx = ctx
@@ -354,7 +358,7 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 		//TODO: entscheiden ob channel/all oder user-mention erzeugt werden muss
 		//msgraph.chatMessageMention{Mentioned: msgraph.IdentitySet{Conversation: "channel"}}
 		//mentionCounterPointer := mentionCounter
-		chanelName := "PublicTest5"
+		chanelName := "PublicTest6"
 
 		if matchingMention == "channel" || matchingMention == "all" {
 			id := int32(0)
@@ -538,7 +542,7 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 		//TODO: entscheiden ob channel/all oder user-mention erzeugt werden muss
 		//msgraph.chatMessageMention{Mentioned: msgraph.IdentitySet{Conversation: "channel"}}
 		//mentionCounterPointer := mentionCounter
-		chanelName := "PublicTest5"
+		chanelName := "PublicTest6"
 		id := int32(0)
 
 		if matchingReplyMention == "channel" || matchingReplyMention == "all" {
@@ -727,7 +731,7 @@ func updateMsgReplies(msg graphmodels.ChatMessageable, msgRepliesInfo *teamsMess
 }
 
 // prüft entweder LastModifiedDateTime oder CreatedDateTime
-func msgTime(graphMsg graphmodels.ChatMessageable) *time.Time { // ->   yaegashi-Bibliothek
+func msgTime(graphMsg graphmodels.ChatMessageable) *time.Time {
 	if graphMsg.GetLastModifiedDateTime() != nil {
 		return graphMsg.GetLastModifiedDateTime()
 	}
@@ -739,7 +743,7 @@ func msgTime(graphMsg graphmodels.ChatMessageable) *time.Time { // ->   yaegashi
 	return graphMsg.GetCreatedDateTime()
 }
 
-func (b *Bmsteams) skipOwnMessage(msg graphmodels.ChatMessageable) bool { // ->   yaegashi-Bibliothek
+func (b *Bmsteams) skipOwnMessage(msg graphmodels.ChatMessageable) bool {
 	msg.GetFrom().GetUser().GetId()
 	if msg.GetFrom() == nil || msg.GetFrom().GetUser() == nil {
 		return false
@@ -847,7 +851,7 @@ func (b *Bmsteams) poll(channelName string) error {
 									Avatar:   "",
 									UserID:   *reply.GetFrom().GetUser().GetId(),
 									ID:       *reply.GetId(),
-									ParentID: *msg.GetFrom().GetUser().GetId(),
+									ParentID: *msg.GetId(),
 									Extra:    make(map[string][]interface{}),
 								}
 								b.handleAttachments(&changedReplyObject, reply)
@@ -857,7 +861,7 @@ func (b *Bmsteams) poll(channelName string) error {
 
 								deleteReplyObject := config.Message{
 									Channel: channelName,
-									Text:    "DeleteMe!",
+									//Text:    "DeleteMe!",
 									Account: b.Account,
 									Avatar:  "",
 									Event:   config.EventMsgDelete,
@@ -884,7 +888,7 @@ func (b *Bmsteams) poll(channelName string) error {
 								Avatar:   "",
 								UserID:   *reply.GetFrom().GetUser().GetId(),
 								ID:       *reply.GetId(),
-								ParentID: *msg.GetFrom().GetUser().GetId(),
+								ParentID: *msg.GetId(),
 								Extra:    make(map[string][]interface{}),
 							}
 							b.handleAttachments(&newReplyObject, reply)
@@ -903,6 +907,7 @@ func (b *Bmsteams) poll(channelName string) error {
 					continue
 				} else {
 					msgInfo.mTime = *msgTime(msg)
+					msgmap[*msg.GetId()] = msgInfo
 				}
 
 				if b.skipOwnMessage(msg) {
@@ -950,14 +955,14 @@ func (b *Bmsteams) poll(channelName string) error {
 				b.Log.Debugf("<= Sending toplevel message from %s on %s to gateway", *msg.GetFrom().GetUser().GetDisplayName(), b.Account)
 				deletedTopLevelMsg := config.Message{
 					Username: *msg.GetFrom().GetUser().GetDisplayName(),
-					Text:     "DeleteMe!",
-					Channel:  channelName,
-					Account:  b.Account,
-					Avatar:   "",
-					UserID:   *msg.GetFrom().GetUser().GetId(),
-					ID:       *msg.GetId(),
-					Event:    config.EventMsgDelete,
-					Extra:    make(map[string][]interface{}),
+					//Text:     "DeleteMe!",
+					Channel: channelName,
+					Account: b.Account,
+					Avatar:  "",
+					UserID:  *msg.GetFrom().GetUser().GetId(),
+					ID:      *msg.GetId(),
+					Event:   config.EventMsgDelete,
+					Extra:   make(map[string][]interface{}),
 				}
 				//b.handleAttachments(&deletedTopLevelMsg, msg)
 				b.Log.Debugf("<= delete toplevel Message is %#v", deletedTopLevelMsg)
