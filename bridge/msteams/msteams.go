@@ -8,10 +8,8 @@ zu Microsoft Teams herzustellen und zu kommunizieren.
 */
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"mime"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,12 +18,14 @@ import (
 	"github.com/42wim/matterbridge/bridge"
 	"github.com/42wim/matterbridge/bridge/config"
 	"github.com/davecgh/go-spew/spew"
-
 	"github.com/mattn/godown"
-	msgraph "github.com/yaegashi/msgraph.go/beta"
-	"github.com/yaegashi/msgraph.go/msauth"
 
-	"golang.org/x/oauth2"
+	azidentity "github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	msgraphsdk "github.com/microsoftgraph/msgraph-sdk-go"
+	graphmodels "github.com/microsoftgraph/msgraph-sdk-go/models"
+	graphteams "github.com/microsoftgraph/msgraph-sdk-go/teams"
+	//msgraph "github.com/yaegashi/msgraph.go/beta"
+	//"github.com/yaegashi/msgraph.go/msauth"
 )
 
 /*
@@ -34,8 +34,8 @@ für den Microsoft Graph-API-Zugriff und ein regulärer Ausdruck, der verwendet 
 um Anhänge aus einer Zeichenfolge zu entfernen, indem er nach einem bestimmten Muster sucht.
 */
 var (
-	defaultScopes = []string{"openid", "profile", "offline_access", "Group.Read.All", "Group.ReadWrite.All", "ChannelMessage.ReadWrite"}
-	attachRE      = regexp.MustCompile(`<attachment id=.*?attachment>`)
+	//defaultScopes = []string{"openid", "profile", "offline_access", "ChannelMessage.Read.Group,", "ChannelMessage.Read.All", "ChannelMessage.ReadWrite", "https://graph.microsoft.com/.default"}
+	attachRE = regexp.MustCompile(`<attachment id=.*?attachment>`)
 )
 
 /*
@@ -43,10 +43,19 @@ Dieser Code definiert eine Struktur namens "Bmsteams", die Konfigurationsdaten f
 mit der Microsoft Teams-API speichert und Funktionen für die Verwendung
 innerhalb einer Matterbridge-Brücke bereitstellt.
 */
+// type Bmsteams struct {
+// 	gc    *msgraph.GraphServiceRequestBuilder // -> inoffiziellen yaegashi-Bibliothek
+// 	ctx   context.Context
+// 	botID string
+// 	*bridge.Config
+// 	idsForDelMap map[string]string
+// }
+
 type Bmsteams struct {
-	gc    *msgraph.GraphServiceRequestBuilder
-	ctx   context.Context
-	botID string
+	gc             *msgraphsdk.GraphServiceClient // -> offizielle Microsoft Graph API
+	ctx            context.Context
+	CurrentMessage config.Message
+	botID          string
 	*bridge.Config
 	idsForDelMap map[string]string
 }
@@ -60,46 +69,97 @@ type teamsMessageInfo struct {
 	replies map[string]time.Time
 }
 
-/*
-Dieser Code definiert eine Methode namens "Connect" für die "Bmsteams" Struktur,
-die eine Verbindung zur Microsoft Teams-API herstellt, indem sie die Authentifizierungsinformationen lädt,
-einen Berechtigungstoken für den Zugriff auf die API anfordert, einen HTTP-Client erstellt
-und eine neue Instanz des Microsoft Graph-API-Clients erstellt, bevor sie die Bot-ID festlegt
-und eine Erfolgsmeldung zurückgibt.
-*/
+// inoffiziellen yaegashi Connect-Methode
+
+// func (b *Bmsteams) Connect() error {
+// 	tokenCachePath := b.GetString("sessionFile")
+// 	if tokenCachePath == "" {
+// 		tokenCachePath = "msteams_session.json"
+// 	}
+// 	ctx := context.Background()
+// 	m := msauth.NewManager()  // -> inoffiziellen yaegashi-Bibliothek
+// 	m.LoadFile(tokenCachePath) //nolint:errcheck
+// 	ts, err := m.DeviceAuthorizationGrant(ctx, b.GetString("TenantID"), b.GetString("ClientID"), defaultScopes, nil) // "m" wir von yaegashi genutzt
+// 	if err != nil {
+// 		return err
+// 	}
+// 	err = m.SaveFile(tokenCachePath) // "m" wir von yaegashi genutzt
+// 	if err != nil {
+// 		b.Log.Errorf("Couldn't save sessionfile in %s: %s", tokenCachePath, err)
+// 	}
+// 	// make file readable only for matterbridge user
+// 	err = os.Chmod(tokenCachePath, 0o600)
+// 	if err != nil {
+// 		b.Log.Errorf("Couldn't change permissions for %s: %s", tokenCachePath, err)
+// 	}
+// 	httpClient := oauth2.NewClient(ctx, ts)
+// 	graphClient := msgraph.NewClient(httpClient) // -> inoffiziellen yaegashi-Bibliothek
+// 	//graphClient := msgraph.NewGraphServiceRequest(httpClient) -> offizielle Microsoft Graph API
+// 	b.gc = graphClient // "graphClient" wir von yaegashi genutzt
+// 	b.ctx = ctx
+
+// 	err = b.setBotID()
+// 	if err != nil {
+// 		return err
+// 	}
+// 	b.Log.Info("Connection succeeded")
+// 	return nil
+// }
+
+// offizielle msgraph API
 func (b *Bmsteams) Connect() error {
 	tokenCachePath := b.GetString("sessionFile")
 	if tokenCachePath == "" {
 		tokenCachePath = "msteams_session.json"
 	}
 	ctx := context.Background()
-	m := msauth.NewManager()
-	m.LoadFile(tokenCachePath) //nolint:errcheck
-	ts, err := m.DeviceAuthorizationGrant(ctx, b.GetString("TenantID"), b.GetString("ClientID"), defaultScopes, nil)
+
+	clientID := b.GetString("ClientID")
+	//clientSecret := b.GetString("ClientSecret")
+	tenantID := b.GetString("TenantID")
+	//scopes := defaultScopes
+	//scopes := []string{"https://graph.microsoft.com/.default"}
+
+	// cred, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to create client secret credential: %v", err)
+	// }
+
+	cred, _ := azidentity.NewDeviceCodeCredential(&azidentity.DeviceCodeCredentialOptions{
+		TenantID: tenantID,
+		ClientID: clientID,
+		UserPrompt: func(ctx context.Context, message azidentity.DeviceCodeMessage) error {
+			fmt.Println(message.Message)
+			return nil
+		},
+	})
+
+	// graphClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(cred, scopes)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to create Graph Service Client: %v", err)
+	// }
+
+	graphClient, err := msgraphsdk.NewGraphServiceClientWithCredentials(
+		cred, []string{"ChannelMessage.Read.All"})
 	if err != nil {
+		b.Log.Error("Error creating graphClient:", err)
 		return err
 	}
-	err = m.SaveFile(tokenCachePath)
-	if err != nil {
-		b.Log.Errorf("Couldn't save sessionfile in %s: %s", tokenCachePath, err)
-	}
-	// make file readable only for matterbridge user
-	err = os.Chmod(tokenCachePath, 0o600)
-	if err != nil {
-		b.Log.Errorf("Couldn't change permissions for %s: %s", tokenCachePath, err)
-	}
-	httpClient := oauth2.NewClient(ctx, ts)
-	graphClient := msgraph.NewClient(httpClient)
+
 	b.gc = graphClient
 	b.ctx = ctx
 
 	err = b.setBotID()
 	if err != nil {
+		b.Log.Error("Error setting Bot ID:", err)
 		return err
 	}
+
 	b.Log.Info("Connection succeeded")
 	return nil
 }
+
+//-----------------------------
 
 func (b *Bmsteams) Disconnect() error {
 	return nil
@@ -122,13 +182,30 @@ func (b *Bmsteams) DeleteToTeams(msg config.Message) (string, error) {
 
 	// wenn msg eine parentID hat: msg.Id und ParentId mittels der map mappen -> zweite Version des Request ausführen
 	// an sonsten: nur msg.ID mappen und erste Version ausführen
+	//Die ganze if-else muss angepasst werden nutzt den call von yaegashi
+	// if msg.ParentID == "" {
+	// 	err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ID).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
+	// 	if err != nil {
+	// 		return "", err
+	// 	}
+	// } else {
+	// 	err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().ID(msg.ID).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
+	// 	if err != nil {
+	// 		return "", err
+	// 	}
+	// }
+	// return "", nil
+
+	//https://learn.microsoft.com/en-us/graph/api/chatmessage-softdelete?view=graph-rest-beta&tabs=go
+	//_, err := b.gc.Me().Team().ChannelsById(channelID).MessagesById(messageID).Request().Delete(b.ctx)
+
 	if msg.ParentID == "" {
-		err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ID).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
+		err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ID).SoftDelete().Post(b.ctx, nil)
 		if err != nil {
 			return "", err
 		}
 	} else {
-		err := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().ID(msg.ID).Request().JSONRequest(b.ctx, "POST", "/softDelete", nil, nil)
+		err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Replies().ByChatMessageId1(msg.ID).SoftDelete().Post(b.ctx, nil)
 		if err != nil {
 			return "", err
 		}
@@ -267,47 +344,76 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 	//htmlText = strings.Replace(htmlText, "\n", "<br>", -1)
 
 	// process mentions
-	var chatMessageMentionsArr []msgraph.ChatMessageMention //array für mention-objekte
+	// []msgraph.ChatMessageMention ist yaegashi
+	var chatMessageMentionsArr []graphmodels.ChatMessageable //array für mention-objekte
+	//var chatMessageMentionsArr []map[string]interface{}
 	//xxx := msgraph.ChatMessageMention{Mentioned: msgraph.IdentitySet{User: msgraph.Identity{ID: "...", DisplayName: "...."}}}
 	mentionPattern := regexp.MustCompile(`(?:^|\s)@([^@\s]+)`)
 	mentionCounter := 0
+	requestBody := graphmodels.NewChatMessage()
+	chatMessageMention := graphmodels.NewChatMessageMention()
 
 	htmlText = mentionPattern.ReplaceAllStringFunc(htmlText, func(matchingMention string) string {
 		mentionCounter++
 		//TODO: entscheiden ob channel/all oder user-mention erzeugt werden muss
 		//msgraph.chatMessageMention{Mentioned: msgraph.IdentitySet{Conversation: "channel"}}
-		mentionCounterPointer := mentionCounter
-		channelIDTeams := msg.Channel
-		chanelName := "PublicTest5"
+		//mentionCounterPointer := mentionCounter
+		chanelName := "PublicTest6"
+
 		if matchingMention == "channel" || matchingMention == "all" {
-			//channelIdentityType := msgraph.ChatMessageMention{Mentioned: &msgraph.IdentitySet{Conversation: &msgraph.ConversationIdentity{IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel}}}
-			mentionContent := msgraph.ChatMessageMention{
-				ID:          &mentionCounterPointer,
-				MentionText: &matchingMention,
-				Mentioned: &msgraph.IdentitySet{
-					Conversation: &msgraph.ConversationIdentity{
-						IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel,
-						Identity: &msgraph.Identity{
-							ID:          &channelIDTeams,
-							DisplayName: &chanelName,
-						},
-					},
-				},
+			id := int32(0)
+			chatMessageMention.SetId(&id)
+			mentionText := "General"
+			chatMessageMention.SetMentionText(&mentionText)
+			mentioned := graphmodels.NewChatMessageMentionedIdentitySet()
+			conversation := graphmodels.NewTeamworkConversationIdentity()
+			channelIDTeams := msg.Channel
+			conversation.SetId(&channelIDTeams)
+			displayName := chanelName
+			conversation.SetDisplayName(&displayName)
+			conversationIdentityType := graphmodels.CHANNEL_TEAMWORKCONVERSATIONIDENTITYTYPE
+			conversation.SetConversationIdentityType(&conversationIdentityType)
+			mentioned.SetConversation(conversation)
+			chatMessageMention.SetMentioned(mentioned)
+
+			mentions := []graphmodels.ChatMessageMentionable{
+				chatMessageMention,
 			}
-			chatMessageMentionsArr = append(chatMessageMentionsArr, mentionContent)
+			requestBody.SetMentions(mentions)
+
+			mentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, requestBody, nil)
+			//mentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(context.Background(), requestBody, nil)
+			if err != nil {
+				return err.Error()
+			}
+			// err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ID).SoftDelete().Post(b.ctx, nil)
+			chatMessageMentionsArr = append(chatMessageMentionsArr, mentionContentChannel)
 		} else {
-			mentionContentAll := msgraph.ChatMessageMention{
-				ID:          &mentionCounterPointer,
-				MentionText: &matchingMention,
-				Mentioned: &msgraph.IdentitySet{
-					Conversation: &msgraph.ConversationIdentity{
-						IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel,
-						Identity: &msgraph.Identity{
-							ID:          &channelIDTeams,
-							DisplayName: &chanelName,
-						},
-					},
-				},
+			id := int32(0)
+			chatMessageMention.SetId(&id)
+			mentionText := "Jane Smith"
+			chatMessageMention.SetMentionText(&mentionText)
+			mentioned := graphmodels.NewChatMessageMentionedIdentitySet()
+			user := graphmodels.NewIdentity()
+			displayName := "Jane Smith"
+			user.SetDisplayName(&displayName)
+			channelIDTeams := msg.Channel
+			user.SetId(&channelIDTeams)
+			additionalData := map[string]interface{}{
+				"userIdentityType": "aadUser",
+			}
+			user.SetAdditionalData(additionalData)
+			mentioned.SetUser(user)
+			chatMessageMention.SetMentioned(mentioned)
+
+			mentions := []graphmodels.ChatMessageMentionable{
+				chatMessageMention,
+			}
+			requestBody.SetMentions(mentions)
+
+			mentionContentAll, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, requestBody, nil)
+			if err != nil {
+				return err.Error()
 			}
 			chatMessageMentionsArr = append(chatMessageMentionsArr, mentionContentAll)
 
@@ -321,7 +427,7 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 	fmt.Println("=> Receiving the HTM String: ", mdToHtml)
 
 	// process attached images
-	var hostedContentsMessagesArr []msgraph.ChatMessageHostedContent
+	var hostedContentsMessagesArr []graphmodels.ChatMessageable // ->   yaegashi-Bibliothek
 	msgChatMessageID := msg.ID
 
 	if msg.Extra["file"] != nil {
@@ -334,22 +440,39 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 			if contentType == "image/jpg" || contentType == "image/jpeg" || contentType == "image/png" {
 				b.Log.Debugf("=> Receiving  the content Type: %#v", contentType)
 				contentBytes := fileInfo.Data
-				encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
+				//encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
 				temporaryIdCounterInt := i
+				requestBody := graphmodels.NewChatMessage()
 				b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
 				temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
 				tag := "<img src=\"../hostedContents/" + temporaryIdCounterStr + "/$value\">" // break
 				mdToHtml += tag
 				b.Log.Debugf("=> Output of the text for body content%#v", mdToHtml)
-				// Erstellung einer ChatMessageHo stedContent-Struktur mit den Werten aus der Schleife
-				hostedContent := msgraph.ChatMessageHostedContent{
-					ContentType:               &contentType,
-					ContentBytes:              &encodedContentBytes,
-					MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
+				// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
+				chatMessageHostedContent := graphmodels.NewChatMessageHostedContent()
+				chatMessageHostedContent.SetContentBytes(*contentBytes)
+				chatMessageHostedContent.SetContentType(&contentType)
+				additionalData := map[string]interface{}{
+					"microsoftGraphTemporaryId": temporaryIdCounterInt,
+				}
+				chatMessageHostedContent.SetAdditionalData(additionalData)
+				hostedContents := []graphmodels.ChatMessageHostedContentable{
+					chatMessageHostedContent,
+				}
+				requestBody.SetHostedContents(hostedContents)
+				hostedContentPost, err := b.gc.Chats().ByChatId(msg.ID).Messages().Post(b.ctx, requestBody, nil)
+				if err != nil {
+					return "", err
 				}
 
+				// hostedContent := graphmodels.ChatMessageHostedContent{ // ->   yaegashi-Bibliothek
+				// 	ContentType:               &contentType,
+				// 	ContentBytes:              &encodedContentBytes,err
+				// 	MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
+				// }
+
 				// Hinzufügen der Nachricht zum Array
-				hostedContentsMessagesArr = append(hostedContentsMessagesArr, hostedContent)
+				hostedContentsMessagesArr = append(hostedContentsMessagesArr, hostedContentPost)
 			} else {
 				contentText := fmt.Sprintf("<br>Datei %s wurde entfernt.", fileInfo.Name)
 				mdToHtml += contentText
@@ -358,32 +481,37 @@ func (b *Bmsteams) Send(msg config.Message) (string, error) {
 		}
 	}
 
-	content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
-	rmsg := &msgraph.ChatMessage{
-		Body:           content,
-		Mentions:       chatMessageMentionsArr,
-		HostedContents: hostedContentsMessagesArr,
-	}
+	//content := &graphmodels.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML} // ->   yaegashi-Bibliothek
+	// itemBody := &graphmodels.ItemBody{
+	// 	Content: &mdToHtml,ChatMessage
+	// 	ContentType:  msgraph.BodyTypePHTML,
+	// }
+	// content := &graphmodels.GetContent(&mdToHtml)
+	// rmsg := &graphmodels.ChatMessage{ // ->   yaegashi-Bibliothek
+	// 	Body:           content,
+	// 	Mentions:       chatMessageMentionsArr,
+	// 	HostedContents: hostedContentsMessagesArr,
+	// }
 	// add new msg
-	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().Request()
+	//ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().Request()
+
 	// Edit msg
-	cte := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ID).Request()
+	//cte := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ID).Request()
 
 	if msg.ID != "" {
-		b.Log.Debug("rmsg update object: ", spew.Sdump(rmsg))
-		err := cte.Update(b.ctx, rmsg)
+		_, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, requestBody, nil)
 		//err := cte.JSONRequest(b.ctx, "PATCH", "?model=A", rmsg, nil)
 		if err != nil {
 			return "", err
 		}
 		return msg.ID, err
 	} else {
-		res, err := ct.Add(b.ctx, rmsg)
+		res, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Patch(b.ctx, requestBody, nil)
 		if err != nil {
 			return "", err
 		}
-		b.idsForDelMap[msgChatMessageID] = *res.ID
-		return *res.ID, nil
+		b.idsForDelMap[msgChatMessageID] = *res.GetChatId()
+		return *res.GetChatId(), nil
 	}
 
 }
@@ -402,55 +530,87 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 	formatUsername := "<strong> " + msg.Username + "</strong>\n"
 	htmlReplyText := "<p>" + formatUsername + "</p>\n\n" + msg.Text
 
-	var chatReplyMessageMentionArr []msgraph.ChatMessageMention
+	var chatReplyMessageMentionArr []graphmodels.ChatMessageable // ->   yaegashi-Bibliothek
 	replyMentionPattern := regexp.MustCompile(`(?:^|\s)@([^@\s]+)`)
-	mentionReplyCounter := 0
-
+	//mentionReplyCounter := 0
+	replyChatMessageMention := graphmodels.NewChatMessageMention()
+	replyRequestBody := graphmodels.NewChatMessage()
+	//replyBody := graphmodels.NewItemBody()
+	//contentType := graphmodels.HTML_BODYTYPE
 	htmlReplyText = replyMentionPattern.ReplaceAllStringFunc(htmlReplyText, func(matchingReplyMention string) string {
-		mentionReplyCounter++
-		mentionReplyCounterPointer := mentionReplyCounter
-		channelIDTeams := msg.Channel
-		channelDisplayName := "PublicTest5"
-		if matchingReplyMention == "channel" || matchingReplyMention == "all" {
-			replyMentionContent := msgraph.ChatMessageMention{
-				ID:          &mentionReplyCounterPointer,
-				MentionText: &matchingReplyMention,
-				Mentioned: &msgraph.IdentitySet{
-					Conversation: &msgraph.ConversationIdentity{
-						IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel,
-						Identity: &msgraph.Identity{
-							ID:          &channelIDTeams,
-							DisplayName: &channelDisplayName,
-						},
-					},
-				},
-			}
-			chatReplyMessageMentionArr = append(chatReplyMessageMentionArr, replyMentionContent)
-		} else {
-			replyMentionContent := msgraph.ChatMessageMention{
-				ID:          &mentionReplyCounterPointer,
-				MentionText: &matchingReplyMention,
-				Mentioned: &msgraph.IdentitySet{
-					Conversation: &msgraph.ConversationIdentity{
-						IdentityTypeConversation: msgraph.ConversationIdentityTypePChannel,
-						Identity: &msgraph.Identity{
-							ID:          &channelIDTeams,
-							DisplayName: &channelDisplayName,
-						},
-					},
-				},
-			}
-			chatReplyMessageMentionArr = append(chatReplyMessageMentionArr, replyMentionContent)
-		}
-		return fmt.Sprintf(" <at id=\"%v\">%s</at>", mentionReplyCounter, matchingReplyMention)
+		//mentionCounter++
+		//TODO: entscheiden ob channel/all oder user-mention erzeugt werden muss
+		//msgraph.chatMessageMention{Mentioned: msgraph.IdentitySet{Conversation: "channel"}}
+		//mentionCounterPointer := mentionCounter
+		chanelName := "PublicTest6"
+		id := int32(0)
 
+		if matchingReplyMention == "channel" || matchingReplyMention == "all" {
+			replyChatMessageMention.SetId(&id)
+			mentionText := matchingReplyMention
+			replyChatMessageMention.SetMentionText(&mentionText)
+			mentionedReplyIdentyty := graphmodels.NewChatMessageMentionedIdentitySet()
+			conversation := graphmodels.NewTeamworkConversationIdentity()
+			channelIDTeams := msg.Channel
+			conversation.SetId(&channelIDTeams)
+			displayName := chanelName
+			conversation.SetDisplayName(&displayName)
+			conversationIdentityType := graphmodels.CHANNEL_TEAMWORKCONVERSATIONIDENTITYTYPE
+			conversation.SetConversationIdentityType(&conversationIdentityType)
+			mentionedReplyIdentyty.SetConversation(conversation)
+			replyChatMessageMention.SetMentioned(mentionedReplyIdentyty)
+
+			mentions := []graphmodels.ChatMessageMentionable{
+				replyChatMessageMention,
+			}
+			replyRequestBody.SetMentions(mentions)
+
+			replyMentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, replyRequestBody, nil)
+			//mentionContentChannel, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(context.Background(), requestBody, nil)
+			if err != nil {
+				return err.Error()
+			}
+			// err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ID).SoftDelete().Post(b.ctx, nil)
+			chatReplyMessageMentionArr = append(chatReplyMessageMentionArr, replyMentionContentChannel)
+		} else {
+			id := int32(0)
+			replyChatMessageMention.SetId(&id)
+			mentionText := "Jane Smith"
+			replyChatMessageMention.SetMentionText(&mentionText)
+			mentioned := graphmodels.NewChatMessageMentionedIdentitySet()
+			user := graphmodels.NewIdentity()
+			displayName := "Jane Smith"
+			user.SetDisplayName(&displayName)
+			channelIDTeams := msg.Channel
+			user.SetId(&channelIDTeams)
+			additionalData := map[string]interface{}{
+				"userIdentityType": "aadUser",
+			}
+			user.SetAdditionalData(additionalData)
+			mentioned.SetUser(user)
+			replyChatMessageMention.SetMentioned(mentioned)
+
+			mentions := []graphmodels.ChatMessageMentionable{
+				replyChatMessageMention,
+			}
+			replyRequestBody.SetMentions(mentions)
+
+			mentionContentAll, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().Post(b.ctx, replyRequestBody, nil)
+			if err != nil {
+				return err.Error()
+			}
+			chatReplyMessageMentionArr = append(chatReplyMessageMentionArr, mentionContentAll)
+
+		}
+		return fmt.Sprintf("<at id=\"%v\">%s</at>", id, matchingReplyMention)
 	})
+
 	b.Log.Debugf("=> Text with mentions: '%#v'", htmlReplyText)
 
 	mdToHtml := makeHTML(htmlReplyText)
 	fmt.Println("=> Receiving the HTM String: ", mdToHtml)
 
-	var hostedContentsMessagesArr []msgraph.ChatMessageHostedContent
+	var hostedContentsMessagesArr []graphmodels.ChatMessageable // ->   yaegashi-Bibliothek
 
 	if msg.Extra["file"] != nil {
 		for i, file := range msg.Extra["file"] {
@@ -462,7 +622,8 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 			if contentType == "image/jpg" || contentType == "image/jpeg" || contentType == "image/png" {
 				b.Log.Debugf("=> Receiving  the content Type: %#v", contentType)
 				contentBytes := fileInfo.Data
-				encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
+				requestBody := graphmodels.NewChatMessage()
+				//encodedContentBytes := base64.StdEncoding.EncodeToString(*contentBytes)
 				temporaryIdCounterInt := i
 				b.Log.Debugf("=> Receiving  the temporary Id-Counter: %#v", temporaryIdCounterInt)
 				temporaryIdCounterStr := strconv.Itoa(temporaryIdCounterInt)
@@ -470,14 +631,24 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 				mdToHtml += tag
 				b.Log.Debugf("=> Output of the text for body content%#v", mdToHtml)
 				// Erstellung einer ChatMessageHostedContent-Struktur mit den Werten aus der Schleife
-				message := msgraph.ChatMessageHostedContent{
-					ContentType:               &contentType,
-					ContentBytes:              &encodedContentBytes,
-					MicrosoftGraphTemporaryId: &temporaryIdCounterStr,
+				chatMessageHostedContent := graphmodels.NewChatMessageHostedContent()
+				chatMessageHostedContent.SetContentBytes(*contentBytes)
+				chatMessageHostedContent.SetContentType(&contentType)
+				additionalData := map[string]interface{}{
+					"microsoftGraphTemporaryId": temporaryIdCounterInt,
+				}
+				chatMessageHostedContent.SetAdditionalData(additionalData)
+				hostedContents := []graphmodels.ChatMessageHostedContentable{
+					chatMessageHostedContent,
+				}
+				requestBody.SetHostedContents(hostedContents)
+				hostedContentPost, err := b.gc.Chats().ByChatId(msg.ID).Messages().Post(context.Background(), requestBody, nil)
+				if err != nil {
+					return "", err
 				}
 
 				// Hinzufügen der Nachricht zum Array
-				hostedContentsMessagesArr = append(hostedContentsMessagesArr, message)
+				hostedContentsMessagesArr = append(hostedContentsMessagesArr, hostedContentPost)
 			} else {
 				contentText := fmt.Sprintf("<br>Datei %s wurde entfernt.", fileInfo.Name)
 				mdToHtml += contentText
@@ -485,43 +656,56 @@ func (b *Bmsteams) sendReply(msg config.Message) (string, error) {
 		}
 	}
 
-	content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML}
-	rmsg := &msgraph.ChatMessage{
-		Body:           content,
-		Mentions:       chatReplyMessageMentionArr,
-		HostedContents: hostedContentsMessagesArr,
-	}
+	// content := &msgraph.ItemBody{Content: &mdToHtml, ContentType: msgraph.BodyTypePHTML} // ->   yaegashi-Bibliothek
+	// rmsg := &msgraph.ChatMessage{                                                        // ->   yaegashi-Bibliothek
+	// 	Body:           content,
+	// 	Mentions:       chatReplyMessageMentionArr,
+	// 	HostedContents: hostedContentsMessagesArr,
+	// }
 
 	// add new reply msg
-	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().Request()
+	//ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().Request()
+
 	// Edit  reply msg
-	cte := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().ID(msg.ID).Request()
+	//cte := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(msg.Channel).Messages().ID(msg.ParentID).Replies().ID(msg.ID).Request()
+
 	if msg.ID != "" {
-		err := cte.Update(b.ctx, rmsg)
+		requestBody := graphmodels.NewChatMessage()
+		_, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Replies().Post(b.ctx, requestBody, nil)
 		if err != nil {
 			return "", err
 		}
 		return msg.ParentID, err
 	} else {
-		res, err := ct.Add(b.ctx, rmsg)
+		requestBody := graphmodels.NewChatMessage()
+		res, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(msg.Channel).Messages().ByChatMessageId(msg.ParentID).Replies().ByChatMessageId1(msg.ID).Patch(b.ctx, requestBody, nil)
 		if err != nil {
 			return "", err
 		}
-		b.idsForDelMap[msg.ID] = *res.ID
-		return *res.ID, nil
+		b.idsForDelMap[msg.ID] = *res.GetChatId()
+		return *res.GetChatId(), nil
 	}
 
 }
 
-func (b *Bmsteams) getMessages(channel string) ([]msgraph.ChatMessage, error) {
-	ct := b.gc.Teams().ID(b.GetString("TeamID")).Channels().ID(channel).Messages().Request()
-	ct.Expand("replies")
-	rct, err := ct.Get(b.ctx)
+func (b *Bmsteams) getMessages(channel string) (graphmodels.ChatMessageCollectionResponseable, error) {
+	//requestTop := int32(1)
+	//channelID := b.CurrentMessage.Channel
+	requestParameters := &graphteams.ItemChannelsItemMessagesRequestBuilderGetQueryParameters{
+		//Top: &requestTop,
+		Expand: []string{"replies"}, // fm kommt weil es keine relies prop da ist
+	}
+	configuration := &graphteams.ItemChannelsItemMessagesRequestBuilderGetRequestConfiguration{
+		QueryParameters: requestParameters,
+	}
+
+	messages, err := b.gc.Teams().ByTeamId(b.GetString("TeamID")).Channels().ByChannelId(channel).Messages().Get(b.ctx, configuration)
+
 	if err != nil {
 		return nil, err
 	}
-	b.Log.Debugf("got %#v messages", len(rct))
-	return rct, nil
+	return messages, nil
+
 }
 
 // Verwalten von toplevel map das verwalten der map (finde nachricht, prüfe Zeitstemple von Nachricht, füge Nachrichte ein)
@@ -532,39 +716,39 @@ func createMapReplies() map[string]time.Time {
 
 }
 
-func updateMsgToplevel(toplevelMsg *msgraph.ChatMessage, msgToplevelInfo *teamsMessageInfo) {
+func updateMsgToplevel(toplevelMsg graphmodels.ChatMessageable, msgToplevelInfo *teamsMessageInfo) { // ->   yaegashi-Bibliothek
 	msgToplevelInfo.mTime = *msgTime(toplevelMsg)
 }
 
-func updateMsgReplies(msg *msgraph.ChatMessage, msgRepliesInfo *teamsMessageInfo, b *Bmsteams) {
+func updateMsgReplies(msg graphmodels.ChatMessageable, msgRepliesInfo *teamsMessageInfo, b *Bmsteams) { // ->   yaegashi-Bibliothek
 	mapReplies := createMapReplies()
-	for _, reply := range msg.Replies {
+	for _, reply := range msg.GetReplies() {
 
-		mapReplies[*reply.ID] = *msgTime(&reply)
-		// }
+		mapReplies[*reply.GetId()] = *msgTime(reply)
 
 	}
 	msgRepliesInfo.replies = mapReplies // nur im ersten mal
 }
 
 // prüft entweder LastModifiedDateTime oder CreatedDateTime
-func msgTime(graphMsg *msgraph.ChatMessage) *time.Time {
-	if graphMsg.LastModifiedDateTime != nil {
-		return graphMsg.LastModifiedDateTime
+func msgTime(graphMsg graphmodels.ChatMessageable) *time.Time {
+	if graphMsg.GetLastModifiedDateTime() != nil {
+		return graphMsg.GetLastModifiedDateTime()
 	}
 
-	if graphMsg.DeletedDateTime != nil {
-		return graphMsg.DeletedDateTime
+	if graphMsg.GetDeletedDateTime() != nil {
+		return graphMsg.GetDeletedDateTime()
 	}
 
-	return graphMsg.CreatedDateTime
+	return graphMsg.GetCreatedDateTime()
 }
 
-func (b *Bmsteams) skipOwnMessage(msg *msgraph.ChatMessage) bool {
-	if msg.From == nil || msg.From.User == nil {
+func (b *Bmsteams) skipOwnMessage(msg graphmodels.ChatMessageable) bool {
+	msg.GetFrom().GetUser().GetId()
+	if msg.GetFrom() == nil || msg.GetFrom().GetUser() == nil {
 		return false
 	}
-	if *msg.From.User.ID == b.botID {
+	if *msg.GetFrom().GetUser().GetId() == b.botID {
 		b.Log.Debug("skipping own message")
 		return true // skip own message
 	}
@@ -618,12 +802,12 @@ func (b *Bmsteams) poll(channelName string) error {
 		return err
 	}
 
-	for _, msgToplevel := range res {
-		msgToplevelInfo := msgmap[*msgToplevel.ID]
+	for _, msgToplevel := range res.GetValue() {
+		msgToplevelInfo := msgmap[*msgToplevel.GetId()]
 		//msgToplevelInfo.mTime = *msgToplevel.CreatedDateTime  should be done by updateMsgToplevel below
-		updateMsgToplevel(&msgToplevel, &msgToplevelInfo)
-		updateMsgReplies(&msgToplevel, &msgToplevelInfo, b)
-		msgmap[*msgToplevel.ID] = msgToplevelInfo
+		updateMsgToplevel(msgToplevel, &msgToplevelInfo)
+		updateMsgReplies(msgToplevel, &msgToplevelInfo, b)
+		msgmap[*msgToplevel.GetId()] = msgToplevelInfo
 	}
 
 	// Annahme: botID und msg sind bereits deklariert und initialisiert
@@ -637,51 +821,51 @@ func (b *Bmsteams) poll(channelName string) error {
 			return err
 		}
 		// check top level messages from oldest to newest
-		for i := len(res) - 1; i >= 0; i-- {
-			msg := res[i]
+		for i := len(res.GetValue()) - 1; i >= 0; i-- {
+			msg := res.GetValue()[i]
 			//b.Log.Debugf("\n\n<= toplevel is ID %s", *msg.ID)
-			if msgInfo, ok := msgmap[*msg.ID]; ok {
-				for _, reply := range msg.Replies {
+			if msgInfo, ok := msgmap[*msg.GetId()]; ok {
+				for _, reply := range msg.GetReplies() {
 					//reply.Reactions
-					if msgTimeReply, ok := msgInfo.replies[*reply.ID]; ok {
+					if msgTimeReply, ok := msgInfo.replies[*reply.GetId()]; ok {
 						// timeStamps vergleichen, hat die replies lasmodifdate
 						// creattime skip
 						//b.Log.Debugf("<= checking reply %s", *reply.ID)
-						if msgTimeReply == *msgTime(&reply) {
+						if msgTimeReply == *msgTime(reply) {
 							//b.Log.Debugf("<= unchanged reply %s", *reply.ID)
 							continue
 
 						}
 
 						// changed or deleted reply - update tiome stamp and pass on
-						msgInfo.replies[*reply.ID] = *msgTime(&reply)
-						if !b.skipOwnMessage(&reply) {
-							if reply.DeletedDateTime == nil {
+						msgInfo.replies[*reply.GetId()] = *msgTime(reply)
+						if !b.skipOwnMessage(reply) {
+							if reply.GetDeletedDateTime() == nil {
 								//time updated for changed reply-ID
-								replyText := b.converMentionsAndRemoveHTML(&reply)
+								replyText := b.converMentionsAndRemoveHTML(reply)
 								changedReplyObject := config.Message{
-									Username: *reply.From.User.DisplayName,
+									Username: *reply.GetFrom().GetUser().GetDisplayName(),
 									Text:     replyText,
 									Channel:  channelName,
 									Account:  b.Account,
 									Avatar:   "",
-									UserID:   *reply.From.User.ID,
-									ID:       *reply.ID,
-									ParentID: *msg.ID,
+									UserID:   *reply.GetFrom().GetUser().GetId(),
+									ID:       *reply.GetId(),
+									ParentID: *msg.GetId(),
 									Extra:    make(map[string][]interface{}),
 								}
 								b.handleAttachments(&changedReplyObject, reply)
-								b.Log.Debugf("<= Updated reply Message ID is %s", *reply.ID)
+								b.Log.Debugf("<= Updated reply Message ID is %s", *reply.GetId())
 								b.Remote <- changedReplyObject
 							} else {
 
 								deleteReplyObject := config.Message{
 									Channel: channelName,
-									Text:    "DeleteMe!",
+									//Text:    "DeleteMe!",
 									Account: b.Account,
 									Avatar:  "",
 									Event:   config.EventMsgDelete,
-									ID:      *reply.ID,
+									ID:      *reply.GetId(),
 								}
 								//b.handleAttachments(&deleteReplyObject, msg)
 								b.Log.Debugf("<= deleted reply Message is %s", deleteReplyObject)
@@ -692,23 +876,23 @@ func (b *Bmsteams) poll(channelName string) error {
 					} else {
 
 						// new reply
-						msgInfo.replies[*reply.ID] = *msgTime(&reply)
+						msgInfo.replies[*reply.GetId()] = *msgTime(reply)
 
-						if !b.skipOwnMessage(&reply) {
-							replyText := b.converMentionsAndRemoveHTML(&reply)
+						if !b.skipOwnMessage(reply) {
+							replyText := b.converMentionsAndRemoveHTML(reply)
 							newReplyObject := config.Message{
-								Username: *reply.From.User.DisplayName,
+								Username: *reply.GetFrom().GetUser().GetDisplayName(),
 								Text:     replyText,
 								Channel:  channelName,
 								Account:  b.Account,
 								Avatar:   "",
-								UserID:   *reply.From.User.ID,
-								ID:       *reply.ID,
-								ParentID: *msg.ID,
+								UserID:   *reply.GetFrom().GetUser().GetId(),
+								ID:       *reply.GetId(),
+								ParentID: *msg.GetId(),
 								Extra:    make(map[string][]interface{}),
 							}
 							b.handleAttachments(&newReplyObject, reply)
-							b.Log.Debugf("<= New reply Message ID is %s", *reply.ID)
+							b.Log.Debugf("<= New reply Message ID is %s", *reply.GetId())
 							b.Remote <- newReplyObject
 
 						}
@@ -719,13 +903,14 @@ func (b *Bmsteams) poll(channelName string) error {
 				// gelöscht und wir müssen eine entsprechende config.Message schicken um sie auch in mm oder slack zu löschen
 
 				// ------------------------------------------------- //
-				if msgInfo.mTime == *msgTime(&msg) {
+				if msgInfo.mTime == *msgTime(msg) {
 					continue
 				} else {
-					msgInfo.mTime = *msgTime(&msg)
+					msgInfo.mTime = *msgTime(msg)
+					msgmap[*msg.GetId()] = msgInfo
 				}
 
-				if b.skipOwnMessage(&msg) {
+				if b.skipOwnMessage(msg) {
 					continue
 				}
 			} else {
@@ -734,48 +919,50 @@ func (b *Bmsteams) poll(channelName string) error {
 					b.Log.Debug("Msg dump: ", spew.Sdump(msg))
 				}
 
-				msgInfo := teamsMessageInfo{mTime: *msgTime(&msg), replies: make(map[string]time.Time)}
-				msgmap[*msg.ID] = msgInfo
+				msgInfo := teamsMessageInfo{mTime: *msgTime(msg), replies: make(map[string]time.Time)}
+				msgmap[*msg.GetId()] = msgInfo // ---------------------> Hier
 
-				if b.skipOwnMessage(&msg) {
+				if b.skipOwnMessage(msg) {
 					continue
 				}
 
 				// skip non-user message for now.
-				if msg.From == nil || msg.From.User == nil {
+				if msg.GetFrom() == nil || msg.GetFrom().GetUser() == nil {
 					continue
 				}
 			}
-			if msg.DeletedDateTime == nil {
+			if msg.GetDeletedDateTime() == nil {
 				// we did not 'continue' above so this message really needs to be sent
-				b.Log.Debugf("<= Sending message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
+				b.Log.Debugf("<= Sending message from %s on %s to gateway", *msg.GetFrom().GetUser().GetDisplayName(), b.Account)
 				// extra funktion
-				text := b.converMentionsAndRemoveHTML(&msg)
+				text := b.converMentionsAndRemoveHTML(msg)
 				rmsg := config.Message{
-					Username: *msg.From.User.DisplayName,
+					//msg.From.User.DisplayName
+					//*msg.From.User.ID,
+					Username: *msg.GetFrom().GetUser().GetDisplayName(),
 					Text:     text,
 					Channel:  channelName,
 					Account:  b.Account,
 					Avatar:   "",
-					UserID:   *msg.From.User.ID,
-					ID:       *msg.ID,
+					UserID:   *msg.GetFrom().GetUser().GetId(),
+					ID:       *msg.GetId(),
 					Extra:    make(map[string][]interface{}),
 				}
 				b.handleAttachments(&rmsg, msg)
 				b.Log.Debugf("<= Message is %#v", rmsg)
 				b.Remote <- rmsg
 			} else {
-				b.Log.Debugf("<= Sending toplevel message from %s on %s to gateway", *msg.From.User.DisplayName, b.Account)
+				b.Log.Debugf("<= Sending toplevel message from %s on %s to gateway", *msg.GetFrom().GetUser().GetDisplayName(), b.Account)
 				deletedTopLevelMsg := config.Message{
-					Username: *msg.From.User.DisplayName,
-					Text:     "DeleteMe!",
-					Channel:  channelName,
-					Account:  b.Account,
-					Avatar:   "",
-					UserID:   *msg.From.User.ID,
-					ID:       *msg.ID,
-					Event:    config.EventMsgDelete,
-					Extra:    make(map[string][]interface{}),
+					Username: *msg.GetFrom().GetUser().GetDisplayName(),
+					//Text:     "DeleteMe!",
+					Channel: channelName,
+					Account: b.Account,
+					Avatar:  "",
+					UserID:  *msg.GetFrom().GetUser().GetId(),
+					ID:      *msg.GetId(),
+					Event:   config.EventMsgDelete,
+					Extra:   make(map[string][]interface{}),
 				}
 				//b.handleAttachments(&deletedTopLevelMsg, msg)
 				b.Log.Debugf("<= delete toplevel Message is %#v", deletedTopLevelMsg)
@@ -788,35 +975,95 @@ func (b *Bmsteams) poll(channelName string) error {
 	}
 }
 
+// func (b *Bmsteams) setBotID() error {
+// 	req := b.gc.Me().Request()
+// 	r, err := req.Get(b.ctx)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	b.botID = *r.ID
+// 	return nil
+// }
+
 func (b *Bmsteams) setBotID() error {
-	req := b.gc.Me().Request()
-	r, err := req.Get(b.ctx)
-	if err != nil {
-		return err
-	}
-	b.botID = *r.ID
+	// Die gc ist eine Instanz von *msgraph.GraphServiceClient
+	//user, err := b.gc.Me().Get(context.Background(), nil)
+	// if err != nil {
+	// 	b.Log.Error("Error setting Bot ID:", err)
+	// 	return err
+	// }
+	b.botID = ""
 	return nil
 }
 
-func (b *Bmsteams) converMentionsAndRemoveHTML(msg *msgraph.ChatMessage) string {
-	// convert mentions in msg.Body.Content
+// func (b *Bmsteams) setBotID() error {
+// 	//result, err := b.gc.Me().Drive().Get(context.Background(), nil)
+// 	result, err := b.gc.Me().Get(context.Background(), nil)
+// 	if err != nil {
+// 		fmt.Printf("Error getting the drive: %v\n", err)
+// 		printOdataError(err)
+// 	}
 
-	text := *msg.Body.Content
+// 	if result != nil && result.GetId() != nil {
+// 		fmt.Printf("Found Drive : %v\n", *result.GetId())
+// 	} else {
+// 		fmt.Println("Result or ID is nil")
+// 	}
+
+// 	return nil
+// }
+
+// // omitted for brevity
+// func printOdataError(err error) {
+// 	switch err.(type) {
+// 	case *odataerrors.ODataError:
+// 		typed := err.(*odataerrors.ODataError)
+// 		fmt.Printf("error:", typed.Error())
+// 		fmt.Printf("code: %v", &typed.Message)
+// 		fmt.Printf("msg: %d", &typed.ResponseStatusCode)
+
+// 	default:
+// 		fmt.Printf("%T > error: %#v", err, err)
+// 	}
+// }
+
+// ->   yaegashi-Bibliothek func
+func (b *Bmsteams) converMentionsAndRemoveHTML(msg graphmodels.ChatMessageable) string {
+	bodyContent := msg.GetBody()
+	if bodyContent == nil {
+		// Handle error or return appropriate response
+		fmt.Println("Error: body content is empty ", bodyContent)
+	}
+
+	content := bodyContent.GetContent()
+	if content == nil {
+		// Handle error or return appropriate response
+		fmt.Println("Error: content is empty ", content)
+	}
+
+	text := *content
+
 	mmMentionPattern := regexp.MustCompile(`<at.+?/at>`)
-	text = mmMentionPattern.ReplaceAllStringFunc(text, func(matchingMattermostMention string) string {
+	tempText := mmMentionPattern.ReplaceAllStringFunc(text, func(matchingMattermostMention string) string {
 		//spliten string
 		splitString := strings.SplitN(matchingMattermostMention, "\"", 3)
 		getIDStr := splitString[1]
-		getIDInt, err := strconv.Atoi(getIDStr)
+		//getIDInt, err := strconv.Atoi(getIDStr)
+		getIDIntTemp, err := strconv.Atoi(getIDStr)
+		getIDInt := int32(getIDIntTemp)
+		if err != nil {
+			// Fehlerbehandlung
+			return ""
+		}
+
 		if err != nil {
 			fmt.Println("Error: ", err)
 			return ""
 		}
 		//schleife über alle mentions
-
-		for _, mention := range msg.Mentions {
-			if *mention.ID == getIDInt {
-				if mention.Mentioned.Conversation != nil {
+		for _, mention := range msg.GetMentions() {
+			if *mention.GetId() == getIDInt {
+				if mention.GetMentioned().GetConversation() != nil {
 					return "@" + "channel"
 				}
 			} else {
@@ -829,7 +1076,7 @@ func (b *Bmsteams) converMentionsAndRemoveHTML(msg *msgraph.ChatMessage) string 
 
 	})
 
-	withoutHTML := b.convertToMD(text)
+	withoutHTML := b.convertToMD(tempText)
 
 	return withoutHTML
 }

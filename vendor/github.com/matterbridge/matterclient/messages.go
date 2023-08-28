@@ -106,25 +106,6 @@ func (m *Client) GetPublicLinks(filenames []string) []string {
 	return output
 }
 
-func (m *Client) ReactToMessage(postId string, emojiName string) (string, error) {
-	   reaction := &model.Reaction{
-			   PostId:    postId,
-			   EmojiName: emojiName,
-	   }
-
-	   for {
-			   res, resp, err := m.Client.SaveReaction(reaction)
-			   if err == nil {
-					   return res.UserId, nil
-			   }
-
-			   if err := m.HandleRatelimit("SaveReaction", resp); err != nil {
-					   return "", err
-			   }
-	   }
-}
-
-
 func (m *Client) PostMessage(channelID string, text string, rootID string) (string, error) {
 	post := &model.Post{
 		ChannelId: channelID,
