@@ -8,7 +8,7 @@ type OutgoingMessage struct {
 	Text            string   `json:"text,omitempty"`
 	Type            string   `json:"type,omitempty"`
 	ThreadTimestamp string   `json:"thread_ts,omitempty"`
-	ThreadBroadcast bool     `json:"reply_broadcast,omitempty"` //A boolean value indicating whether the message should be sent to the entire thread or only to the original sender. This field is optional.
+	ThreadBroadcast bool     `json:"reply_broadcast,omitempty"`
 	IDs             []string `json:"ids,omitempty"`
 }
 
