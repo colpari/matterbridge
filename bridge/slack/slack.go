@@ -220,11 +220,6 @@ func (b *Bslack) Reload(cfg *bridge.Config) (string, error) {
 	return "", nil
 }
 
-func insertTags(input string) string {
-	re := regexp.MustCompile(`(@[A-Za-z0-9]{1,21})`)
-	output := re.ReplaceAllString(input, "<$1>")
-	return output
-}
 
 func (b *Bslack) Send(msg config.Message) (string, error) {
 	// Too noisy to log like other events
@@ -232,7 +227,7 @@ func (b *Bslack) Send(msg config.Message) (string, error) {
 		b.Log.Debugf("=> Receiving %#v", msg)
 	}
 
-	msg.Text := insertTags(msg.Text)
+	msg.Text = insertTags(msg.Text)
 	msg.Text = helper.ClipMessage(msg.Text, messageLength, b.GetString("MessageClipped"))
 	msg.Text = b.replaceCodeFence(msg.Text)
 
@@ -287,7 +282,7 @@ func (b *Bslack) sendWebhook(msg config.Message) error {
 				continue
 			}
 			if fi.URL != "" {
-				msg.Text := insertTags(msg.Text)
+				msg.Text = insertTags(msg.Text)
 				msg.Text += " " + fi.URL
 			}
 		}

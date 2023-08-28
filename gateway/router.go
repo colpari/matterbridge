@@ -150,6 +150,7 @@ func (r *Router) handleReceive() {
 				gw.handleFiles(&msg)
 				filesHandled = true
 			}
+			//FIXME: what is this?
 			// das ist wichtig hier muss ich die skip msg implementieren
 			// mit so einer logig kann man die msg skipen
 			// if *msg.ID == b.botID {
