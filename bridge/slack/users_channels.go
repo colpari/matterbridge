@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	//"fmt"
 	"sync"
 	"time"
 
+	"github.com/42wim/matterbridge/bridge"
 	"github.com/42wim/matterbridge/bridge/config"
 	"github.com/sirupsen/logrus"
 	"github.com/slack-go/slack"
@@ -120,6 +123,9 @@ func (b *users) invalidateUser(userID string) {
 }
 
 func (b *users) populateUsers(wait bool) {
+	// mutex anschauen wo verlässt er die funktion
+
+	// prüft ob das warten deaktiviert und der Thread auf die ressourcen zugreifen kann
 	b.refreshMutex.Lock()
 	if !wait && (time.Now().Before(b.earliestRefresh) || b.refreshInProgress) {
 		b.log.Debugf("Not refreshing user list as it was done less than %v ago.", minimumRefreshInterval)
@@ -136,6 +142,7 @@ func (b *users) populateUsers(wait bool) {
 	b.refreshMutex.Unlock()
 
 	newUsers := map[string]*slack.User{}
+	//pagination-Struktur initialisiert, um die Benutzerdaten in Seiten abzurufen
 	pagination := b.sc.GetUsersPaginated(slack.GetUsersOptionLimit(200))
 	count := 0
 	for {
@@ -202,6 +209,7 @@ func newChannelManager(log *logrus.Entry, sc *slack.Client) *channels {
 	}
 }
 
+// ------------------------------------------------------------- now changed ------------------------------
 func (b *channels) getChannel(channel string) (*slack.Channel, error) {
 	if strings.HasPrefix(channel, "ID:") {
 		return b.getChannelByID(strings.TrimPrefix(channel, "ID:"))
@@ -227,37 +235,42 @@ func (b *channels) getChannelBy(lookupKey string, lookupMap map[string]*slack.Ch
 	return nil, fmt.Errorf("channel %s not found", lookupKey)
 }
 
-func (b *channels) getChannelMembers(users *users) config.ChannelMembers {
-	b.channelMembersMutex.RLock()
-	defer b.channelMembersMutex.RUnlock()
+// ------------------------------------------------------------- now changed ------------------------------
 
-	membersInfo := config.ChannelMembers{}
-	for channelID, members := range b.channelMembers {
-		for _, member := range members {
-			channelName := ""
-			userName := ""
-			userNick := ""
-			user := users.getUser(member)
-			if user != nil {
-				userName = user.Name
-				userNick = user.Profile.DisplayName
-			}
-			channel, _ := b.getChannelByID(channelID)
-			if channel != nil {
-				channelName = channel.Name
-			}
-			memberInfo := config.ChannelMember{
-				Username:    userName,
-				Nick:        userNick,
-				UserID:      member,
-				ChannelID:   channelID,
-				ChannelName: channelName,
-			}
-			membersInfo = append(membersInfo, memberInfo)
-		}
-	}
-	return membersInfo
-}
+// ------------------------------------------------------------- now changed ------------------------------
+// func (b *channels) getChannelMembers(users *users) config.ChannelMembers {
+// 	b.channelMembersMutex.RLock()
+// 	defer b.channelMembersMutex.RUnlock()
+
+// 	membersInfo := config.ChannelMembers{}
+// 	fmt.Println("This is the user parameter :: ", users)
+// 	for channelID, members := range b.channelMembers {
+// 		for _, member := range members {
+// 			channelName := ""
+// 			userName := ""
+// 			userNick := ""
+// 			user := users.getUser(member)
+// 			if user != nil {
+// 				userName = user.Name
+// 				userNick = user.Profile.DisplayName
+// 			}
+// 			channel, _ := b.getChannelByID(channelID)
+// 			if channel != nil {
+// 				channelName = channel.Name
+// 			}
+// 			memberInfo := config.ChannelMember{
+// 				Username:    userName,
+// 				Nick:        userNick,
+// 				UserID:      member,
+// 				ChannelID:   channelID,
+// 				ChannelName: channelName,
+// 			}
+// 			membersInfo = append(membersInfo, memberInfo)
+// 		}
+// 	}
+// 	return membersInfo
+// }
+// ------------------------------------------------------------- now changed ------------------------------
 
 func (b *channels) registerChannel(channel slack.Channel) {
 	b.channelsMutex.Lock()
@@ -266,8 +279,16 @@ func (b *channels) registerChannel(channel slack.Channel) {
 	b.channelsByID[channel.ID] = &channel
 	b.channelsByName[channel.Name] = &channel
 }
+func extractID(input string) string {
+	prefix := "ID:"
+	index := strings.Index(input, prefix)
+	if index != -1 && index+len(prefix)+11 <= len(input) {
+		return input[index+len(prefix) : index+len(prefix)+11]
+	}
+	return ""
+}
 
-func (b *channels) populateChannels(wait bool) {
+func (b *channels) populateChannels(wait bool, cfg *bridge.Config) {
 	b.refreshMutex.Lock()
 	if !wait && (time.Now().Before(b.earliestRefresh) || b.refreshInProgress) {
 		b.log.Debugf("Not refreshing channel list as it was done less than %v seconds ago.", minimumRefreshInterval)
@@ -282,62 +303,296 @@ func (b *channels) populateChannels(wait bool) {
 	b.refreshInProgress = true
 	b.refreshMutex.Unlock()
 
-	newChannelsByID := map[string]*slack.Channel{}
-	newChannelsByName := map[string]*slack.Channel{}
-	newChannelMembers := make(map[string][]string)
+	// nimm die einzige channel-ID aus cfg, hole die channel info und sorge dafür,#
+	// dass in channelsByID und channelsByName jeweils nur ein Eintrag für genau diesen Channel ist
+	// channelMembers versuchen wir weiterhin leer zu lassen erstmal
 
-	// We only retrieve public and private channels, not IMs
-	// and MPIMs as those do not have a channel name.
-	queryParams := &slack.GetConversationsParameters{
-		ExcludeArchived: true,
-		Types:           []string{"public_channel,private_channel"},
-		Limit:           1000,
-	}
-	for {
-		channels, nextCursor, err := b.sc.GetConversations(queryParams)
-		if err != nil {
-			if err = handleRateLimit(b.log, err); err != nil {
-				b.log.Errorf("Could not retrieve channels: %#v", err)
-				return
+	// channelInfo := cfg.Bridge.Channels
+	// channelID := channelInfo["ID"]
+
+	//----------------------------------------------------
+	// NOTE: Dieser Code geht davon aus, dass cfg.Bridge.Channels nur einen einzigen Eintrag enthält.
+
+	// Deklariere und initialisiere die Variablen für die Kanäle und Mitglieder
+	// var newChannelsByID = make(map[string]*slack.Channel)
+	// var newChannelsByName = make(map[string]*slack.Channel)
+	// var newChannelMembers = make(map[string][]string)
+	if cfg != nil {
+		// Zugriff auf das Config-Interface
+		configInterface := cfg.Config
+
+		// Überprüfen, ob das Interface nil ist
+		if configInterface != nil {
+			var channelID string
+			var channelInfo config.ChannelInfo
+			//var channelInfoName string
+
+			// Durchlaufe die Kanäle in der Map um die chInfo zu holen.
+			for _, info := range cfg.Bridge.Channels {
+				channelInfo = info
+				break
 			}
-			continue
-		}
+			// Den Ch
+			channelConversationInfo := slack.Channel{
+				GroupConversation: slack.GroupConversation{
+					Name: channelInfo.Name,
+				},
+			}
 
-		for i := range channels {
-			newChannelsByID[channels[i].ID] = &channels[i]
-			newChannelsByName[channels[i].Name] = &channels[i]
-			// also find all the members in every channel
-			// comment for now, issues on big slacks
-			/*
-				members, err := b.getUsersInConversation(channels[i].ID)
-				if err != nil {
-					if err = b.handleRateLimit(err); err != nil {
-						b.Log.Errorf("Could not retrieve channel members: %#v", err)
-						return
+			//fmt.Println("Channel:", channelConversationInfo)
+
+			// Hier können Sie auf die Werte im Config-Objekt zugreifen
+			//v := configInterface.Viper()
+			bridgeValues := configInterface.BridgeValues()
+			bridgeValueGateway := bridgeValues.Gateway
+
+			// fmt.Println("Viper:", v)
+			// fmt.Println("bridgeValues:", bridgeValues)
+			// fmt.Println("bridgeValueGateway:", bridgeValueGateway)
+
+			for _, bridge := range bridgeValueGateway {
+				// Zugriff auf das InOut-Feld
+				inout := bridge.InOut
+				found := false // Variable zum Verfolgen, ob der gewünschte Wert gefunden wurde
+				for _, InOutValue := range inout {
+					if InOutValue.Account == "slack.colpari" {
+						channelID = InOutValue.Channel // Aktualisieren des channelID-Werts
+						found = true
+						break
 					}
-					continue
 				}
-				newChannelMembers[channels[i].ID] = members
-			*/
-		}
+				if !found {
+					fmt.Println("Der gewünschte Wert wurde nicht gefunden.")
+				}
+			}
 
-		if nextCursor == "" {
-			break
+			if strings.HasPrefix(channelInfo.Name, "ID:") {
+				channelID = strings.TrimPrefix(channelID, "ID:")
+			}
+
+			// channelID verwenden und in newChannelsByID speichern
+			newChannelsByID := make(map[string]*slack.Channel)
+			newChannelsByID[channelID] = &channelConversationInfo
+
+			fmt.Println("newChannelsByID:", newChannelsByID)
+
+			// Speichere den Channel in channelsByName mit dem Namen als Schlüssel.
+
+			channelConversationInfo.Name = strings.TrimPrefix(channelConversationInfo.Name, "ID:")
+
+			newChannelsByName := make(map[string]*slack.Channel)
+			newChannelsByName[channelConversationInfo.Name] = &channelConversationInfo
+
+			fmt.Println("newChannelsByName:", newChannelsByName)
+
+			// leere channel Members map
+			var newChannelMembers = make(map[string][]string)
+
+			// Entfernen des Präfix "ID:" aus channelID
+
+			b.channelsByID = newChannelsByID
+			b.channelsByName = newChannelsByName
+			b.channelMembers = newChannelMembers
+
+			b.earliestRefresh = time.Now().Add(minimumRefreshInterval)
+			b.refreshInProgress = false
+
 		}
-		queryParams.Cursor = nextCursor
 	}
 
-	b.channelsMutex.Lock()
-	defer b.channelsMutex.Unlock()
-	b.channelsByID = newChannelsByID
-	b.channelsByName = newChannelsByName
+	// if cfg.Bridge != nil && cfg.Bridge.Channels != nil {
+	// 	channels := cfg.Bridge.Channels
 
-	b.channelMembersMutex.Lock()
-	defer b.channelMembersMutex.Unlock()
-	b.channelMembers = newChannelMembers
+	// 	for key, value := range channels {
+	// 		fmt.Println("Key:", key)
+	// 		fmt.Println("Value:", value)
+	// 	}
+	// } else {
+	// 	fmt.Println("Fehler: cfg.Bridge oder cfg.Bridge.Channels ist Nil.")
+	// }
+	// die map mi slack.channel mit der channel info fühlen
+	// if cfg.Bridge != nil {
+	// 	// Überprüfe, ob das Channels-Feld nicht nil ist und nur einen Eintrag enthält.
+	// 	if cfg.Bridge.Channels != nil && len(cfg.Bridge.Channels) == 1 {
+	// 		var channelID string
+	// 		var channelInfo config.ChannelInfo
 
-	b.refreshMutex.Lock()
-	defer b.refreshMutex.Unlock()
-	b.earliestRefresh = time.Now().Add(minimumRefreshInterval)
-	b.refreshInProgress = false
+	// 		// Durchlaufe die Kanäle in der Map.
+	// 		for id, info := range cfg.Bridge.Channels {
+	// 			channelID = extractID(id)
+	// 			channelInfo = info
+	// 			break
+	// 		}
+
+	// 		// slackChannel := &slack.Channel{}
+	// 		// channelConversation := slackChannel.Conversation
+	// 		// channel := channelConversation{
+	// 		// 	ID:   channelID,
+	// 		// 	Name: channelInfo.Name,
+	// 		// 	// Wenn benötigt wird setzten wir mehr felder
+	// 		// }
+	// 		// Erstelle ein neues slack.Channel-Objekt mit den entsprechenden Informationen.
+	// 		channelConversationInfo := slack.Channel{
+	// 			GroupConversation: slack.GroupConversation{
+	// 				Conversation: slack.Conversation{
+	// 					ID: channelID,
+	// 				},
+	// 				Name: channelInfo.Name,
+	// 			},
+	// 		}
+	// 		fmt.Println("Channel:", channelConversationInfo)
+
+	// 		// channelConversation := channelConversationGroup.Conversation(
+	// 		// 	ID:   channelID,
+	// 		// 	Name: channelInfo.Name,
+	// 		// )
+
+	// 		// Speichere den Channel in channelsByID mit der ID als Schlüssel.
+	// 		newChannelsByID := make(map[string]*slack.Channel)
+	// 		newChannelsByID[channelID] = &channelConversationInfo
+
+	// 		fmt.Println("newChannelsByID:", newChannelsByID)
+
+	// 		// Speichere den Channel in channelsByName mit dem Namen als Schlüssel.
+	// 		newChannelsByName := make(map[string]*slack.Channel)
+	// 		newChannelsByName[channelConversationInfo.Name] = &channelConversationInfo
+
+	// 		fmt.Println("newChannelsByName:", newChannelsByName)
+
+	// 		// leere channel Members map
+	// 		var newChannelMembers = make(map[string][]string)
+
+	// 		// Jetzt kannst du die extrahierte ID und die beiden Maps verwenden.
+	// 		fmt.Println("ID:", channelID)
+	// 		fmt.Println("channelsByID:", newChannelsByID)
+	// 		fmt.Println("channelsByName:", newChannelsByName)
+
+	// 		b.channelsByID = newChannelsByID
+	// 		b.channelsByName = newChannelsByName
+	// 		b.channelMembers = newChannelMembers
+
+	// 	} else {
+	// 		fmt.Println("Error: cfg.Bridge Nil or cfg.Bridge.Channels len greater than 1.")
+	// 	}
+	// } else {
+	// 	fmt.Println("Error: cfg.Bridge Nil.")
+	// }
+
+	// -------------------
+	// if cfg.Bridge != nil {
+	// 	// Überprüfe, ob das Channels-Feld nicht nil ist und nur einen Eintrag enthält.
+	// 	if cfg.Bridge.Channels != nil && len(cfg.Bridge.Channels) == 1 {
+	// 		var channelID string
+	// 		var channelInfo config.ChannelInfo
+
+	// 		//var newChannelsByName = make(map[string]*slack.Channel)
+	// 		//var newChannelMembers = make(map[string][]string)
+
+	// 		// Durchlaufe die Kanäle in der Map.
+	// 		for id, info := range cfg.Bridge.Channels {
+	// 			channelID = id
+	// 			channelInfo = info
+	// 			break
+	// 		}
+
+	// 		// Speichere den Channel in channelsByID mit der ID als Schlüssel.
+	// 		newChannelsByID := make(map[string]*slack.Channel)
+	// 		newChannelsByID[channelID] = channelInfo
+
+	// 		// Speichere den Channel in channelsByName mit dem Namen als Schlüssel.
+	// 		newChannelsByName := make(map[string]*slack.Channel)
+	// 		newChannelsByName[channelInfo.Name] = channelInfo
+
+	// 		// Jetzt kannst du die extrahierte ID und die beiden Maps verwenden.
+	// 		fmt.Println("ID:", channelID)
+	// 		fmt.Println("channelsByID:", newChannelsByID)
+	// 		fmt.Println("channelsByName:", newChannelsByName)
+
+	// 		// Weise die erstellten Maps dem Bridge-Objekt zu.
+	// 		b.channelsByID = newChannelsByID
+	// 		b.channelsByName = newChannelsByName
+	// 		b.channelMembers = newChannelMembers
+	// 	} else {
+	// 		fmt.Println("Error: cfg.Bridge Nil or cfg.Bridge.Channels len greater than 1.")
+	// 	}
+	// } else {
+	// 	fmt.Println("Error: cfg.Bridge Nil.")
+	// }
+
+	// for id, info := range channelsByID {
+	// 	newChannelsByID[id] = info
+	// }
+
+	// for name, info := range channelsByName {
+	// 	newChannelsByName[name] = info
+	// }
+
+	// newChannelsByID := map[string]*slack.Channel{}
+	// newChannelsByName := map[string]*slack.Channel{}
+
+	// if len(newChannelsByID) == 1 {
+	// 	for _, channel := range newChannelsByID {
+	// 		if channel.ID == channelID {
+	// 			fmt.Println("newChannelsByID enthält nur einen Eintrag für den angegebenen Channel.")
+	// 		} else {
+	// 			fmt.Println("newChannelsByID enthält einen Eintrag, aber nicht für den angegebenen Channel.")
+	// 		}
+	// 	}
+	// }
+
+	// // We only retrieve public and private channels, not IMs
+	// // and MPIMs as those do not have a channel name.
+	// queryParams := &slack.GetConversationsParameters{
+	// 	ExcludeArchived: true,
+	// 	Types:           []string{"public_channel,private_channel"},
+	// 	Limit:           1000,
+	// }
+	// for {
+	// 	channels, nextCursor, err := b.sc.GetConversations(queryParams)
+	// 	if err != nil {
+	// 		if err = handleRateLimit(b.log, err); err != nil {
+	// 			b.log.Errorf("Could not retrieve channels: %#v", err)
+	// 			return
+	// 		}
+	// 		continue
+	// 	}
+
+	// 	for i := range channels {
+	// 		newChannelsByID[channels[i].ID] = &channels[i]
+	// 		newChannelsByName[channels[i].Name] = &channels[i]
+	// 		// also find all the members in every channel
+	// 		// comment for now, issues on big slacks
+	// 		/*
+	// 			members, err := b.getUsersInConversation(channels[i].ID)
+	// 			if err != nil {
+	// 				if err = b.handleRateLimit(err); err != nil {
+	// 					b.Log.Errorf("Could not retrieve channel members: %#v", err)
+	// 					return
+	// 				}
+	// 				continue
+	// 			}
+	// 			newChannelMembers[channels[i].ID] = members
+	// 		*/
+	// 	}
+
+	// 	if nextCursor == "" {
+	// 		break
+	// 	}
+	// 	queryParams.Cursor = nextCursor
+	// }
+
+	// b.channelsMutex.Lock()
+	// defer b.channelsMutex.Unlock()
+	// b.channelsByID = newChannelsByID
+	// b.channelsByName = newChannelsByName
+
+	// b.channelMembersMutex.Lock()
+	// defer b.channelMembersMutex.Unlock()
+	// b.channelMembers = newChannelMembers
+	// get channel members ein log rein und die maps leer machen
+	// b.refreshMutex.Lock()
+	// defer b.refreshMutex.Unlock()
+	//b.earliestRefresh = time.Now().Add(minimumRefreshInterval)
+	//b.refreshInProgress = false
+
 }

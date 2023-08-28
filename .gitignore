@@ -10,4 +10,6 @@ matterbridge.toml
 
 # profile directory for buildWithDocker.sh
 /builder-home
+
+#debug vs code
 __debug_bin

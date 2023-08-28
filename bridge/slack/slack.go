@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/42wim/matterbridge/bridge"
 	"github.com/42wim/matterbridge/bridge/config"
@@ -16,6 +17,7 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/rs/xid"
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/socketmode"
 )
 
 type Bslack struct {
@@ -23,13 +25,15 @@ type Bslack struct {
 	*bridge.Config
 
 	mh  *matterhook.Client
+	ssm *socketmode.Client // socketmode einfügen
 	sc  *slack.Client
-	rtm *slack.RTM
-	si  *slack.Info
+	//rtm *slack.RTM
+	si *slack.Info
+	//ui *slack.UserIdentityResponse
 
-	cache        *lru.Cache
-	uuid         string
-	useChannelID bool
+	cache *lru.Cache
+	uuid  string
+	//useChannelID bool
 
 	channels *channels
 	users    *users
@@ -58,6 +62,7 @@ const (
 	cfileDownloadChannel = "file_download_channel"
 
 	tokenConfig           = "Token"
+	tokenConfigApp        = "TokenAPP"
 	incomingWebhookConfig = "WebhookBindAddress"
 	outgoingWebhookConfig = "WebhookURL"
 	skipTLSConfig         = "SkipTLSVerify"
@@ -110,14 +115,27 @@ func (b *Bslack) Connect() error {
 	// If we have a token we use the Slack websocket-based RTM for both sending and receiving.
 	if token := b.GetString(tokenConfig); token != "" {
 		b.Log.Info("Connecting using token")
+		appToken := b.GetString(tokenConfigApp)
+		b.sc = slack.New(
+			token,
+			slack.OptionDebug(true),
+			slack.OptionLog(log.New(os.Stdout, "api: ", log.Lshortfile|log.LstdFlags)),
+			slack.OptionAppLevelToken(appToken),
+		)
 
-		b.sc = slack.New(token, slack.OptionDebug(b.GetBool("Debug")))
+		b.ssm = socketmode.New(
+			b.sc,
+			socketmode.OptionDebug(true),
+			socketmode.OptionLog(log.New(os.Stdout, "socketmode: ", log.Lshortfile|log.LstdFlags)),
+		)
+		// GetUserIdentity, _ := b.sc2.users.profile.get
+		// fmt.Println("The object of the GetUserIdentity :: ", GetUserIdentity)
 
 		b.channels = newChannelManager(b.Log, b.sc)
 		b.users = newUserManager(b.Log, b.sc)
-
-		b.rtm = b.sc.NewRTM()
-		go b.rtm.ManageConnection()
+		// in b struckt
+		//b.rtm = b.sc.NewRTM()
+		//go b.rtm.ManageConnection()
 		go b.handleSlack()
 		return nil
 	}
@@ -143,9 +161,9 @@ func (b *Bslack) Connect() error {
 	return nil
 }
 
-func (b *Bslack) Disconnect() error {
-	return b.rtm.Disconnect()
-}
+// func (b *Bslack) Disconnect() error {
+// 	return b.ssm.Disconnect()
+// }
 
 // JoinChannel only acts as a verification method that checks whether Matterbridge's
 // Slack integration is already member of the channel. This is because Slack does not
@@ -158,34 +176,44 @@ func (b *Bslack) JoinChannel(channel config.ChannelInfo) error {
 	}
 
 	// try to join a channel when in legacy
-	if b.legacy {
-		_, _, _, err := b.sc.JoinConversation(channel.Name)
-		if err != nil {
-			switch err.Error() {
-			case "name_taken", "restricted_action":
-			case "default":
-				return err
-			}
-		}
+	if !b.legacy {
+		// _, _, _, err := b.sc.JoinConversation(channel.Name)
+		// if err != nil {
+		// 	switch err.Error() {
+		// 	case "name_taken", "restricted_action":
+		// 	case "default":
+		// 		return err
+		// 	}
+		// }
+		//b.useChannelID = true
+		return nil
 	}
 
-	b.channels.populateChannels(false)
+	b.channels.populateChannels(false, b.Config)
+	// ------------------------------------------------------------- now changed ------------------------------
+	// channelInfo, err := b.channels.getChannel(channel.Name)
+	// if err != nil {
+	// 	return fmt.Errorf("could not join channel: %#v", err)
+	// }
 
-	channelInfo, err := b.channels.getChannel(channel.Name)
-	if err != nil {
-		return fmt.Errorf("could not join channel: %#v", err)
-	}
+	// if strings.HasPrefix(channel.Name, "ID:") {
 
-	if strings.HasPrefix(channel.Name, "ID:") {
-		b.useChannelID = true
-		channel.Name = channelInfo.Name
-	}
+	// 	channel.Name = channelInfo.Name
+	// }
 
-	// we can't join a channel unless we are using legacy tokens #651
-	if !channelInfo.IsMember && !b.legacy {
-		return fmt.Errorf("slack integration that matterbridge is using is not member of channel '%s', please add it manually", channelInfo.Name)
-	}
+	// // we can't join a channel unless we are using legacy tokens #651
+	// if !channelInfo.IsMember && !b.legacy {
+	// 	return fmt.Errorf("slack integration that matterbridge is using is not member of channel '%s', please add it manually", channelInfo.Name)
+	// }
+	// return nil
 	return nil
+	// ------------------------------------------------------------- now changed ------------------------------
+}
+
+func insertTags(input string) string {
+	re := regexp.MustCompile(`(@[A-Za-z0-9]{1,21})`)
+	output := re.ReplaceAllString(input, "<$1>")
+	return output
 }
 
 func (b *Bslack) Reload(cfg *bridge.Config) (string, error) {
@@ -203,9 +231,10 @@ func (b *Bslack) Send(msg config.Message) (string, error) {
 	if msg.Event != config.EventUserTyping {
 		b.Log.Debugf("=> Receiving %#v", msg)
 	}
-	formatierterText := insertTags(msg.Text)
-	msg.Text = helper.ClipMessage(formatierterText, messageLength, b.GetString("MessageClipped"))
-	msg.Text = b.replaceCodeFence(formatierterText)
+
+	msg.Text := insertTags(msg.Text)
+	msg.Text = helper.ClipMessage(msg.Text, messageLength, b.GetString("MessageClipped"))
+	msg.Text = b.replaceCodeFence(msg.Text)
 
 	// Make a action /me of the message
 	if msg.Event == config.EventUserAction {
@@ -216,7 +245,10 @@ func (b *Bslack) Send(msg config.Message) (string, error) {
 	if b.GetString(outgoingWebhookConfig) != "" && b.GetString(tokenConfig) == "" {
 		return "", b.sendWebhook(msg)
 	}
-	return b.sendRTM(msg)
+	// ------------------------------------------------------------- now changed ------------------------------
+	// return muss auf die eventsAPI umgestellt werden
+	return b.sendSlackEventsAPI(msg)
+	// ------------------------------------------------------------- now changed ------------------------------
 }
 
 // sendWebhook uses the configured WebhookURL to send the message
@@ -255,8 +287,8 @@ func (b *Bslack) sendWebhook(msg config.Message) error {
 				continue
 			}
 			if fi.URL != "" {
-				formatierterText := insertTags(msg.Text)
-				formatierterText += " " + fi.URL
+				msg.Text := insertTags(msg.Text)
+				msg.Text += " " + fi.URL
 			}
 		}
 	}
@@ -285,29 +317,33 @@ func (b *Bslack) sendWebhook(msg config.Message) error {
 	return nil
 }
 
-func (b *Bslack) sendRTM(msg config.Message) (string, error) {
+// Diese Funktion muss angepasst werden
+func (b *Bslack) sendSlackEventsAPI(msg config.Message) (string, error) {
 	// Handle channelmember messages.
-	if handled := b.handleGetChannelMembers(&msg); handled {
-		return "", nil
-	}
+	// ------------------------------------------------------------- now changed ------------------------------
+	// if handled := b.handleGetChannelMembers(&msg); handled {
+	// 	return "", nil
+	// }
+	// ------------------------------------------------------------- now changed ------------------------------
 
-	channelInfo, err := b.channels.getChannel(msg.Channel)
-	if err != nil {
-		return "", fmt.Errorf("could not send message: %v", err)
-	}
-	if msg.Event == config.EventUserTyping {
-		if b.GetBool("ShowUserTyping") {
-			b.rtm.SendMessage(b.rtm.NewTypingMessage(channelInfo.ID))
-		}
-		return "", nil
-	}
+	// channelInfo, err := b.channels.getChannel(msg.Channel)
+	// if err != nil {
+	// 	return "", fmt.Errorf("could not send message: %v", err)
+	// }
 
-	var handled bool
+	// if msg.Event == config.EventUserTyping {
+	// 	if b.GetBool("ShowUserTyping") {
+	// 		b.sc.PostUserTypingEvent(channelInfo.ID)
+	// 	}
+	// 	return "", nil
+	// }
+
+	//var handled bool
 
 	// Handle topic/purpose updates.
-	if handled, err = b.handleTopicOrPurpose(&msg, channelInfo); handled {
-		return "", err
-	}
+	// if handled, err = b.handleTopicOrPurpose(&msg, channelInfo); handled {
+	// 	return "", err
+	// }
 
 	// Handle prefix hint for unthreaded messages.
 	if msg.ParentNotFound() {
@@ -316,17 +352,17 @@ func (b *Bslack) sendRTM(msg config.Message) (string, error) {
 	}
 
 	// Handle message deletions.
-	if handled, err = b.deleteMessage(&msg, channelInfo); handled {
+	if handled, err := b.deleteMessage(&msg); handled {
 		return msg.ID, err
 	}
 
 	// Prepend nickname if configured.
 	if b.GetBool(useNickPrefixConfig) {
-		msg.Text = msg.Username + msg.Text
+		msg.Text = fmt.Sprintf("*[ %s ]*\n%s", msg.Username, msg.Text)
 	}
 
 	// Handle message edits.
-	if handled, err = b.editMessage(&msg, channelInfo); handled {
+	if handled, err := b.editMessage(&msg); handled {
 		return msg.ID, err
 	}
 
@@ -336,63 +372,105 @@ func (b *Bslack) sendRTM(msg config.Message) (string, error) {
 		for i := range extraMsgs {
 			rmsg := &extraMsgs[i]
 			rmsg.Text = rmsg.Username + rmsg.Text
-			_, err = b.postMessage(rmsg, channelInfo)
+			_, err := b.postMessage(rmsg)
 			if err != nil {
 				b.Log.Error(err)
 			}
 		}
 		// Upload files if necessary (from Slack, Telegram or Mattermost).
-		return b.uploadFile(&msg, channelInfo.ID)
+		return b.uploadFile(&msg, msg.Channel)
 	}
 
 	// Post message.
-	return b.postMessage(&msg, channelInfo)
+	return b.postMessage(&msg)
 }
 
-func (b *Bslack) updateTopicOrPurpose(msg *config.Message, channelInfo *slack.Channel) error {
-	var updateFunc func(channelID string, value string) (*slack.Channel, error)
+// ------------------------------------------------------------- now changed ------------------------------
 
-	incomingChangeType, text := b.extractTopicOrPurpose(msg.Text)
-	switch incomingChangeType {
-	case "topic":
-		updateFunc = b.rtm.SetTopicOfConversation
-	case "purpose":
-		updateFunc = b.rtm.SetPurposeOfConversation
-	default:
-		b.Log.Errorf("Unhandled type received from extractTopicOrPurpose: %s", incomingChangeType)
-		return nil
-	}
-	for {
-		_, err := updateFunc(channelInfo.ID, text)
-		if err == nil {
-			return nil
-		}
-		if err = handleRateLimit(b.Log, err); err != nil {
-			return err
-		}
-	}
-}
+// ------------------------------------------------------------- now changed ------------------------------
+// func (b *Bslack) updateTopicOrPurpose(msg *config.Message, channelInfo *slack.Channel) error {
+// 	var updateFunc func(channelID string, value string) (*slack.Channel, error)
+
+// 	incomingChangeType, text := b.extractTopicOrPurpose(msg.Text)
+// 	switch incomingChangeType {
+// 	case "topic":
+// 		updateFunc = b.rtm.SetTopicOfConversation
+// 	case "purpose":
+// 		updateFunc = b.rtm.SetPurposeOfConversation
+// 	default:
+// 		b.Log.Errorf("Unhandled type received from extractTopicOrPurpose: %s", incomingChangeType)
+// 		return nil
+// 	}
+// 	for {
+// 		_, err := updateFunc(channelInfo.ID, text)
+// 		if err == nil {
+// 			return nil
+// 		}
+// 		if err = handleRateLimit(b.Log, err); err != nil {
+// 			return err
+// 		}
+// 	}
+// }
 
 // handles updating topic/purpose and determining whether to further propagate update messages.
-func (b *Bslack) handleTopicOrPurpose(msg *config.Message, channelInfo *slack.Channel) (bool, error) {
-	if msg.Event != config.EventTopicChange {
-		return false, nil
-	}
+// func (b *Bslack) handleTopicOrPurpose(msg *config.Message, channelInfo *slack.Channel) (bool, error) {
+// 	if msg.Event != config.EventTopicChange {
+// 		return false, nil
+// 	}
 
-	if b.GetBool("SyncTopic") {
-		return true, b.updateTopicOrPurpose(msg, channelInfo)
-	}
+// 	// if b.GetBool("SyncTopic") {
+// 	// 	return true, b.updateTopicOrPurpose(msg, channelInfo)
+// 	// }
 
-	// Pass along to normal message handlers.
-	if b.GetBool("ShowTopicChange") {
-		return false, nil
-	}
+// 	// Pass along to normal message handlers.
+// 	if b.GetBool("ShowTopicChange") {
+// 		return false, nil
+// 	}
 
-	// Swallow message as handled no-op.
-	return true, nil
-}
+// 	// Swallow message as handled no-op.
+// 	return true, nil
+// }
 
-func (b *Bslack) deleteMessage(msg *config.Message, channelInfo *slack.Channel) (bool, error) {
+// func (b *Bslack) deleteMessage(msg *config.Message) (bool, error) {
+// 	if msg.Event != config.EventMsgDelete {
+// 		return false, nil
+// 	}
+
+// 	// Some protocols echo deletes, but with an empty ID.
+// 	if msg.ID == "" {
+// 		return true, nil
+// 	}
+
+// 	// 1. Lösche die Hauptnachricht
+// 	_, _, err := b.ssm.DeleteMessage(msg.Channel, msg.ID)
+// 	if err != nil {
+// 		// Fehlerbehandlung
+// 		return false, err
+// 	}
+// 	b.Log.Debugf("Timestamp ::", msg.Timestamp.Format(time.RFC3339))
+// 	// 2. Rufe die Antworten auf die gelöschte Nachricht ab
+// 	replies, _, _, err := b.sc.GetConversationReplies(&slack.GetConversationRepliesParameters{
+// 		ChannelID: msg.Channel,
+// 		Timestamp: msg.Timestamp.Format(time.RFC3339),
+// 	})
+// 	if err != nil {
+// 		// Fehlerbehandlung
+// 		return false, err
+// 	}
+
+// 	// 3. Lösche die einzelnen Antworten
+// 	for _, reply := range replies {
+// 		_, _, err := b.ssm.DeleteMessage(reply.Channel, reply.Timestamp)
+// 		if err != nil {
+// 			// Fehlerbehandlung
+// 			return false, err
+// 		}
+// 	}
+
+// 	return true, nil
+// }
+
+func (b *Bslack) deleteMessage(msg *config.Message) (bool, error) {
 	if msg.Event != config.EventMsgDelete {
 		return false, nil
 	}
@@ -403,7 +481,7 @@ func (b *Bslack) deleteMessage(msg *config.Message, channelInfo *slack.Channel) 
 	}
 
 	for {
-		_, _, err := b.rtm.DeleteMessage(channelInfo.ID, msg.ID)
+		_, _, err := b.sc.DeleteMessage(msg.Channel, msg.ID)
 		if err == nil {
 			return true, nil
 		}
@@ -415,13 +493,63 @@ func (b *Bslack) deleteMessage(msg *config.Message, channelInfo *slack.Channel) 
 	}
 }
 
-func (b *Bslack) editMessage(msg *config.Message, channelInfo *slack.Channel) (bool, error) {
+// func (b *Bslack) deleteReply(reply *config.Reply) (bool, error) {
+// 	if reply.Event != config.EventReplyDelete {
+// 		return false, nil
+// 	}
+
+// 	// Some protocols echo deletes, but with an empty ID.
+// 	if reply.ID == "" {
+// 		return true, nil
+// 	}
+
+// 	for {
+// 		_, _, err := b.ssm.DeleteMessage(reply.Channel, reply.ID)
+// 		if err == nil {
+// 			return true, nil
+// 		}
+
+// 		if err = handleRateLimit(b.Log, err); err != nil {
+// 			b.Log.Errorf("Failed to delete user reply from Slack: %#v", err)
+// 			return true, err
+// 		}
+// 	}
+// }
+
+// func (b *Bslack) deleteMessage(api *slack.Client, channel string, ts string) error {
+// 	// Löschen der Hauptnachricht
+// 	_, _, err := api.DeleteMessage(channel, ts)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	// Holen aller Antworten auf die Nachricht
+// 	replies, _, _, err := api.GetConversationReplies(&slack.GetConversationRepliesParameters{
+// 		ChannelID: channel,
+// 		Timestamp: ts,
+// 	})
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	// Löschen aller Antworten
+// 	for _, reply := range replies {
+// 		_, _, err := api.DeleteMessage(channel, reply.Timestamp)
+// 		if err != nil {
+// 			fmt.Printf("Failed to delete reply: %s\n", err)
+// 		}
+// 	}
+
+// 	return nil
+// }
+
+func (b *Bslack) editMessage(msg *config.Message) (bool, error) {
 	if msg.ID == "" {
 		return false, nil
 	}
 	messageOptions := b.prepareMessageOptions(msg)
 	for {
-		_, _, _, err := b.rtm.UpdateMessage(channelInfo.ID, msg.ID, messageOptions...)
+		_, _, _, err := b.ssm.UpdateMessage(msg.Channel, msg.ID, messageOptions...)
 		if err == nil {
 			return true, nil
 		}
@@ -433,14 +561,14 @@ func (b *Bslack) editMessage(msg *config.Message, channelInfo *slack.Channel) (b
 	}
 }
 
-func (b *Bslack) postMessage(msg *config.Message, channelInfo *slack.Channel) (string, error) {
+func (b *Bslack) postMessage(msg *config.Message) (string, error) {
 	// don't post empty messages
 	if msg.Text == "" {
 		return "", nil
 	}
 	messageOptions := b.prepareMessageOptions(msg)
 	for {
-		_, id, err := b.rtm.PostMessage(channelInfo.ID, messageOptions...)
+		_, id, err := b.ssm.PostMessage(msg.Channel, messageOptions...)
 		if err == nil {
 			return id, nil
 		}
@@ -452,54 +580,269 @@ func (b *Bslack) postMessage(msg *config.Message, channelInfo *slack.Channel) (s
 	}
 }
 
-// uploadFile handles native upload of files
+//uploadFile handles native upload of files
+// func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
+// 	var messageID string
+
+// 	for _, f := range msg.Extra["file"] {
+// 		fi, ok := f.(config.FileInfo)
+// 		if !ok {
+// 			b.Log.Errorf("Received a file with unexpected content: %#v", f)
+// 			continue
+// 		}
+// 		//formatierterTextFile := insertTags(fi.Comment)
+// 		if msg.Text == fi.Comment {
+// 			msg.Text = ""
+// 		}
+// 		// Because the result of the UploadFile is slower than the MessageEvent from slack
+// 		// we can't match on the file ID yet, so we have to match on the filename too.
+// 		ts := time.Now()
+// 		b.Log.Debugf("Adding file %s to cache at %s with timestamp", fi.Name, ts.String())
+// 		b.cache.Add("filename"+fi.Name, ts)
+// 		// initialComment := fmt.Sprintf("File from %s", msg.Username)
+// 		// if fi.Comment != "" {
+// 		// 	initialComment += fmt.Sprintf(" with comment: %s", fi.Comment)
+// 		// }
+// 		res, err := b.sc.UploadFile(slack.FileUploadParameters{
+// 			Reader:   bytes.NewReader(*fi.Data),
+// 			Filename: fi.Name,
+// 			Channels: []string{channelID},
+// 			//InitialComment:  formatierterTextFile,
+// 			ThreadTimestamp: msg.ParentID,
+// 		})
+// 		if err != nil {
+// 			b.Log.Errorf("uploadfile %#v", err)
+// 			return "", err
+// 		}
+// 		if res.ID != "" {
+// 			b.Log.Debugf("Adding file ID %s to cache with timestamp %s", res.ID, ts.String())
+// 			b.cache.Add("file"+res.ID, ts)
+
+// 			// search for message id by uploaded file in private/public channels, get thread timestamp from uploaded file
+// 			if v, ok := res.Shares.Private[channelID]; ok && len(v) > 0 {
+// 				messageID = v[0].Ts
+// 			}
+// 			if v, ok := res.Shares.Public[channelID]; ok && len(v) > 0 {
+// 				messageID = v[0].Ts
+// 			}
+// 		}
+// 	}
+// 	return messageID, nil
+// }
+// func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
+// 	var messageID string
+
+// 	var files []config.FileInfo
+// 	var fileLinks []string
+
+// 	for _, f := range msg.Extra["file"] {
+// 		fi, ok := f.(config.FileInfo)
+// 		if !ok {
+// 			b.Log.Errorf("Received a file with unexpected content: %#v", f)
+// 			continue
+// 		}
+
+// 		files = append(files, fi)
+// 	}
+
+// 	for _, file := range files {
+// 		res, err := b.sc.UploadFile(slack.FileUploadParameters{
+// 			Reader:          bytes.NewReader(*file.Data),
+// 			Filename:        file.Name,
+// 			Channels:        []string{channelID},
+// 			ThreadTimestamp: msg.ParentID,
+// 		})
+// 		if err != nil {
+// 			b.Log.Errorf("uploadfile %#v", err)
+// 			return "", err
+// 		}
+
+// 		if res.ID != "" {
+// 			ts := time.Now()
+// 			b.Log.Debugf("Adding file ID %s to cache with timestamp %s", res.ID, ts.String())
+// 			b.cache.Add("file"+res.ID, ts)
+
+// 			// search for message id by uploaded file in private/public channels, get thread timestamp from uploaded file
+// 			if v, ok := res.Shares.Private[channelID]; ok && len(v) > 0 {
+// 				messageID = v[0].Ts
+// 			}
+// 			if v, ok := res.Shares.Public[channelID]; ok && len(v) > 0 {
+// 				messageID = v[0].Ts
+// 			}
+
+// 			fileLinks = append(fileLinks, res.URLPrivate)
+// 		}
+// 	}
+
+// 	if len(fileLinks) > 0 {
+// 		// Erstellen der Nachricht mit den Dateilinks
+// 		fileList := strings.Join(fileLinks, "\n")
+// 		msg.Text += "\nAttached Files:\n" + fileList
+
+// 		// Hier den Code einfügen, um die Nachricht zu senden
+// 		// ...
+
+// 	}
+
+// 	return messageID, nil
+// }
+
+// func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
+// 	// Sende die Nachricht und erhalte die Nachrichten-ID
+// 	_, respTimestamp, err := b.sc.PostMessage(channelID, slack.MsgOptionText(msg.Text, false))
+// 	if err != nil {
+// 		b.Log.Errorf("Fehler beim Senden der Nachricht: %#v", err)
+// 		return "", err
+// 	}
+
+// 	// Hänge die Dateien an den ursprünglichen Post an
+// 	for _, f := range msg.Extra["file"] {
+// 		fi, ok := f.(config.FileInfo)
+// 		if !ok {
+// 			b.Log.Errorf("Empfangene Datei mit unerwartetem Inhalt: %#v", f)
+// 			continue
+// 		}
+
+// 		ts := time.Now()
+// 		b.Log.Debugf("Füge Datei %s zum Cache hinzu mit Zeitstempel %s", fi.Name, ts.String())
+// 		b.cache.Add("filename"+fi.Name, ts)
+
+// 		_, err := b.sc.UploadFile(slack.FileUploadParameters{
+// 			Reader:          bytes.NewReader(*fi.Data),
+// 			Filename:        fi.Name,
+// 			Channels:        []string{channelID},
+// 			ThreadTimestamp: respTimestamp, // Verwende die Nachrichten-ID des ursprünglichen Posts
+// 		})
+// 		if err != nil {
+// 			b.Log.Errorf("Fehler beim Hochladen der Datei: %#v", err)
+// 			return "", err
+// 		}
+// 	}
+
+// 	return respTimestamp, nil
+// }
+
 func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
-	var messageID string
+	// Sende die Nachricht und erhalte die Nachrichten-ID
+	_, respTimestamp, err := b.sc.PostMessage(channelID, slack.MsgOptionText(msg.Text, false))
+	if err != nil {
+		b.Log.Errorf("Fehler beim Senden der Nachricht: %#v", err)
+		return "", err
+	}
+
+	// Upload the image to Slack
+	var imageID string
 	for _, f := range msg.Extra["file"] {
 		fi, ok := f.(config.FileInfo)
 		if !ok {
-			b.Log.Errorf("Received a file with unexpected content: %#v", f)
+			b.Log.Errorf("Empfangene Datei mit unerwartetem Inhalt: %#v", f)
 			continue
 		}
-		formatierterTextFile := insertTags(fi.Comment)
-		if msg.Text == fi.Comment {
-			msg.Text = ""
+
+		params := slack.FileUploadParameters{
+			Reader:   bytes.NewReader(*fi.Data),
+			Filename: fi.Name,
 		}
-		// Because the result of the UploadFile is slower than the MessageEvent from slack
-		// we can't match on the file ID yet, so we have to match on the filename too.
-		ts := time.Now()
-		b.Log.Debugf("Adding file %s to cache at %s with timestamp", fi.Name, ts.String())
-		b.cache.Add("filename"+fi.Name, ts)
-		// initialComment := fmt.Sprintf("File from %s", msg.Username)
-		// if fi.Comment != "" {
-		// 	initialComment += fmt.Sprintf(" with comment: %s", fi.Comment)
-		// }
-		res, err := b.sc.UploadFile(slack.FileUploadParameters{
-			Reader:          bytes.NewReader(*fi.Data),
-			Filename:        fi.Name,
-			Channels:        []string{channelID},
-			InitialComment:  formatierterTextFile,
-			ThreadTimestamp: msg.ParentID,
-		})
+
+		// Step 1: Upload the image to Slack
+		file, err := b.sc.UploadFile(params)
+
 		if err != nil {
-			b.Log.Errorf("uploadfile %#v", err)
+			b.Log.Errorf("Fehler beim Hochladen der Datei: %#v", err)
 			return "", err
 		}
-		if res.ID != "" {
-			b.Log.Debugf("Adding file ID %s to cache with timestamp %s", res.ID, ts.String())
-			b.cache.Add("file"+res.ID, ts)
+		// response, err := b.sc.GetFilesSharedPublicURL(fileID)
+		// if err != nil {
+		// 	return "", err
+		// }
 
-			// search for message id by uploaded file in private/public channels, get thread timestamp from uploaded file
-			if v, ok := res.Shares.Private[channelID]; ok && len(v) > 0 {
-				messageID = v[0].Ts
-			}
-			if v, ok := res.Shares.Public[channelID]; ok && len(v) > 0 {
-				messageID = v[0].Ts
-			}
+		imageID = file.ID
+
+		// extract the pub_secret from permalink_public
+		// linkPartsPermalinkPublic := strings.Split(file.PermalinkPublic, "-")
+		// pubSecret := linkPartsPermalinkPublic[3]
+
+		teamInfo, err := b.sc.GetTeamInfo()
+		if err != nil {
+			// Handle the error
+			return "", err
+		}
+
+		teamID := teamInfo.ID
+
+		// Step 2: Create a public URL
+		// _, _, publicURL, err := b.sc.GetFileInfo(file.ID, 0, 0)
+		// if err != nil {
+		// 	b.Log.Errorf("Fehler beim Abrufen der Ã¶ffentlichen URL: %#v", err)
+		// 	return "", err
+		// }
+
+		// Step 3: Construct the direct image link
+		imageURL := fmt.Sprintf("https://files.slack.com/files-pri/%s-%s/%s?", teamID, imageID, fi.Name)
+
+		// Erstelle das title-Objekt vom Typ TextBlockObject
+		titleText := msg.Text
+		title := slack.NewTextBlockObject(slack.PlainTextType, titleText, false, false)
+
+		// Create an image block with the imageURL
+		imageBlock := slack.NewImageBlock(imageURL, "Image", "", title)
+
+		// Send the message with the image block
+		_, respTimestamp, err = b.sc.PostMessage(channelID, slack.MsgOptionBlocks(imageBlock))
+		if err != nil {
+			b.Log.Errorf("Fehler beim Senden der Nachricht mit dem Bild: %#v", err)
+			return "", err
 		}
 	}
-	return messageID, nil
+
+	return respTimestamp, nil
 }
+
+// uploadFile handles native upload of files
+// func (b *Bslack) uploadFile(msg *config.Message, channelID string) (string, error) {
+// 	var messageID string
+
+// 	// Sende die Nachricht und erhalte die Nachrichten-ID
+// 	respChannel, respTimestamp, err := b.sc.PostMessage(channelID, slack.MsgOptionText(msg.Text, false))
+// 	if err != nil {
+// 		b.Log.Errorf("Fehler beim Senden der Nachricht: %#v", err)
+// 		return "", err
+// 	}
+// 	if respChannel != "" {
+// 		messageID = respTimestamp
+// 	}
+
+// 	// Hänge die Dateien als Anhänge zum Hauptpost an
+// 	for _, f := range msg.Extra["file"] {
+// 		fi, ok := f.(config.FileInfo)
+// 		if !ok {
+// 			b.Log.Errorf("Empfangene Datei mit unerwartetem Inhalt: %#v", f)
+// 			continue
+// 		}
+
+// 		ts := time.Now()
+// 		b.Log.Debugf("Füge Datei %s zum Cache hinzu mit Zeitstempel %s", fi.Name, ts.String())
+// 		b.cache.Add("filename"+fi.Name, ts)
+
+// 		_, err := b.sc.UploadFile(slack.FileUploadParameters{
+// 			Reader:          bytes.NewReader(*fi.Data),
+// 			Filename:        fi.Name,
+// 			Channels:        []string{channelID},
+// 			ThreadTimestamp: messageID, // Verwende die Nachrichten-ID als Thread-Timestamp
+// 		})
+// 		if err != nil {
+// 			b.Log.Errorf("Fehler beim Hochladen der Datei: %#v", err)
+// 			return "", err
+// 		}
+
+// 		// Alternative: Datei-IDs als separate Nachrichten speichern
+// 		// fileID := res.ID
+// 		// b.Log.Debugf("Füge Datei-ID %s zum Cache hinzu mit Zeitstempel %s", fileID, ts.String())
+// 		// b.cache.Add("file"+fileID, ts)
+// 	}
+
+// 	return messageID, nil
+// }
 
 func (b *Bslack) prepareMessageOptions(msg *config.Message) []slack.MsgOption {
 	params := slack.NewPostMessageParameters()

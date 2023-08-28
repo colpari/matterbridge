@@ -150,6 +150,13 @@ func (r *Router) handleReceive() {
 				gw.handleFiles(&msg)
 				filesHandled = true
 			}
+			// das ist wichtig hier muss ich die skip msg implementieren
+			// mit so einer logig kann man die msg skipen
+			// if *msg.ID == b.botID {
+			// 	b.Log.Debug("skipping own message")
+			// 	return true // skip own message
+			// }
+
 			for _, br := range gw.Bridges {
 				msgIDs = append(msgIDs, gw.handleMessage(&msg, br)...)
 			}
